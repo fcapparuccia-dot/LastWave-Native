@@ -23,7 +23,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,7 +35,7 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33], manifest = Config.NONE)
 class AndroidAutoMediaLibrarySearchTest {
     @Test
-    fun searchShowsCategoriesBeforeSongsAndAllowsSavingAnAlbum() = runTest {
+    fun searchShowsCategoriesBeforeSongsAndAllowsSavingAnAlbum() = runBlocking {
         val searchRepository = mockk<SearchRepository>()
         val playlistRepository = mockk<PlaylistRepository>(relaxed = true)
         val libraryManager = mockk<YtMusicLibraryManager>()
