@@ -122,6 +122,10 @@ AGP uses), so a restored key and a generated key are interchangeable.
 normalised `keystore sha256=…` line of the cached key. If those two differ, the APK is signed by a key that never
 reaches the cache and the next run's APK will not update it.
 
+That is what the first fully-working run showed: AGP 9 signs the debug variant with a keystore of its own, so the two
+digests differed and the APK changed key every run. The staging step therefore re-signs the APK with the cached key
+(`apksigner sign --ks ~/.android/debug.keystore`, alias `androiddebugkey`, password `android`) before publishing it.
+
 A key mismatch is what an OEM installer shows as *"package not installed because it conflicts with an existing package
 on the device"* (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): it reads like a leftover in Settings, and it survives a reboot.
 Check what is really installed — also for other users, because app clones, Secure Folder/Secure Mode and work profiles

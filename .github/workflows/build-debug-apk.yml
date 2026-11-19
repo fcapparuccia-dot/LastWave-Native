@@ -13,7 +13,9 @@ name: Build LastWave Debug APK
 # previous run's install (INSTALL_FAILED_UPDATE_INCOMPATIBLE, which OEM
 # installers word as "package conflicts with an existing package on the
 # device"). It is still not the local %USERPROFILE%\.android\debug.keystore, so
-# the first CI APK needs one `adb uninstall com.lastwave.app.debug`.
+# the first CI APK needs one `adb uninstall com.lastwave.app.debug`. AGP 9 signs
+# the debug variant with a keystore of its own, so the staging step re-signs the
+# APK with this cached key.
 #
 # Manual on purpose: it must not race the release job on every push.
 on:
@@ -89,6 +91,16 @@ jobs:
           SDKROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           BUILD_TOOLS=$(find "$SDKROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
           if [ -x "$BUILD_TOOLS/apksigner" ]; then
+            # AGP 9 signs the debug variant with a keystore of its own, not the
+            # cached one: the run that added the digest line below printed a
+            # "keystore sha256" different from the APK signer digest, a fresh key
+            # per run, i.e. the bug this job exists to fix. Re-sign with the key
+            # the job keeps; zipalign already ran in AGP and apksigner keeps it.
+            "$BUILD_TOOLS/apksigner" sign \
+              --ks ~/.android/debug.keystore --ks-key-alias androiddebugkey \
+              --ks-pass pass:android --key-pass pass:android \
+              --out "$APK.resigned" "$APK"
+            mv "$APK.resigned" "$APK"
             "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > final_apk/SIGNER.txt
           else
             echo "apksigner not found under $SDKROOT, APK signature not verified" > final_apk/SIGNER.txt
