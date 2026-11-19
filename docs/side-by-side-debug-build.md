@@ -103,6 +103,34 @@ C:\Users\fcapp\scrcpy\adb.exe install -r C:\Users\fcapp\lastwave-build\app\outpu
 C:\Users\fcapp\scrcpy\adb.exe shell am start -n com.lastwave.app.debug/com.lastwave.app.MainShellActivity
 ```
 
+### The workflow's debug APK (CI)
+
+`.github/workflows/build-debug-apk.yml` builds `assembleDebug` with `-PapplicationId=com.lastwave.app.debug` and uploads
+`final_apk/LastWave-v<version>-debug.apk`, `SHA256SUMS.txt` and `SIGNER.txt` (the `apksigner verify --print-certs` output).
+
+The job restores one cached `~/.android/debug.keystore` (cache key `lastwave-ci-debug-keystore-v1`), so successive CI
+artifacts share a key and update each other. That key is **not** this machine's `%USERPROFILE%\.android\debug.keystore`,
+so the first CI APK needs one uninstall of the side-by-side app.
+
+A key mismatch is what an OEM installer shows as *"package not installed because it conflicts with an existing package
+on the device"* (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): it reads like a leftover in Settings, and it survives a reboot.
+Check what is really installed — also for other users, because app clones, Secure Folder/Secure Mode and work profiles
+keep their own copy:
+
+```powershell
+& C:\Users\fcapp\scrcpy\adb.exe shell pm list packages | Select-String 'lastwave|qqmusic'
+& C:\Users\fcapp\scrcpy\adb.exe shell pm list users
+& C:\Users\fcapp\scrcpy\adb.exe shell cmd package list packages --user 0 | Select-String 'lastwave'
+& C:\Users\fcapp\scrcpy\adb.exe uninstall com.lastwave.app.debug
+```
+
+`SIGNER.txt` in the artifact is the ground truth for the key already on the phone: compare it with
+`adb shell dumpsys package com.lastwave.app.debug | Select-String signatures`.
+
+Debug builds are labelled **LastWave Debug** — on `<application>` and on all five launcher aliases
+(`app/src/debug/AndroidManifest.xml`, string in `app/src/debug/res/values/strings.xml`) — so the side-by-side copy is no
+longer indistinguishable from the release app on the home screen and in Settings › Apps.
+
 ### Resuming from another PC
 
 What travels with the OneDrive folder: all source, including both changes in Â§1 and both `docs/` scripts. So on the other machine the blue debug icon and the optional `-PapplicationId` property are already in place as soon as OneDrive finishes syncing.

@@ -8,6 +8,13 @@ name: Build LastWave Debug APK
 # runner's debug key and, with the applicationId override, installable next to a
 # release app already on the phone.
 #
+# The debug keystore below is cached, so every run of this job signs with the
+# same key. A fresh key per run would make each new APK uninstallable over the
+# previous run's install (INSTALL_FAILED_UPDATE_INCOMPATIBLE, which OEM
+# installers word as "package conflicts with an existing package on the
+# device"). It is still not the local %USERPROFILE%\.android\debug.keystore, so
+# the first CI APK needs one `adb uninstall com.lastwave.app.debug`.
+#
 # Manual on purpose: it must not race the release job on every push.
 on:
   workflow_dispatch:
@@ -33,6 +40,15 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      # AGP generates ~/.android/debug.keystore on the runner when it is missing,
+      # so without this cache every run signs with a different key and the APK
+      # cannot update the previous run's install.
+      - name: Restore the debug signing key
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.android/debug.keystore
+          key: lastwave-ci-debug-keystore-v1
+
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
@@ -50,7 +66,19 @@ jobs:
           VERSION=$(grep -m1 -oE 'versionName = "[^"]+"' app/build.gradle.kts | sed -E 's/.*"(.*)"/\1/')
           [ -n "$VERSION" ] || VERSION="5.0.0"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/debug/app-debug.apk "final_apk/LastWave-v${VERSION}-debug.apk"
+          APK="final_apk/LastWave-v${VERSION}-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$APK"
+          # An unsigned or mis-signed APK is what the installer reports as a
+          # package conflict, so prove the signature and publish the signer
+          # digest: it must match the key of the copy already on the phone.
+          SDKROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS=$(find "$SDKROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
+          if [ -x "$BUILD_TOOLS/apksigner" ]; then
+            "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > final_apk/SIGNER.txt
+            cat final_apk/SIGNER.txt
+          else
+            echo "::warning::apksigner not found under $SDKROOT, APK signature not verified"
+          fi
           (cd final_apk && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
           ls -lh final_apk/
 
