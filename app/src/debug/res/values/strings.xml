@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- translatable="false" on purpose: values-<locale>/strings.xml defines
+         app_name in every shipped language, so a translatable label would fall
+         back to "LastWave" and hide the debug build again. -->
+    <string name="debug_app_name" translatable="false">LastWave Debug</string>
+</resources>

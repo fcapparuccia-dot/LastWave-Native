@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- A debug build installs side by side with the release app
+         (com.lastwave.app.debug), but both were labelled "LastWave": uninstalling
+         "every version" removed one of the two and the next CI install then failed
+         with a package conflict against the copy still there. The label lives on
+         <application> and on every launcher alias, so both are renamed here; icons
+         and @string/app_name keep their main values. -->
+    <application
+        android:label="@string/debug_app_name"
+        tools:replace="android:label">
+
+        <activity-alias
+            android:name=".MainActivity"
+            android:label="@string/debug_app_name"
+            tools:replace="android:label" />
+
+        <activity-alias
+            android:name=".MainActivityDefault"
+            android:label="@string/debug_app_name"
+            tools:replace="android:label" />
+
+        <activity-alias
+            android:name=".MainActivityDesktop"
+            android:label="@string/debug_app_name"
+            tools:replace="android:label" />
+
+        <activity-alias
+            android:name=".MainActivityWhite"
+            android:label="@string/debug_app_name"
+            tools:replace="android:label" />
+
+        <activity-alias
+            android:name=".MainActivityBlack"
+            android:label="@string/debug_app_name"
+            tools:replace="android:label" />
+    </application>
+</manifest>
