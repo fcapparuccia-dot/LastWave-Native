@@ -508,12 +508,21 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         extras: Bundle?,
         result: Result<List<MediaBrowserCompat.MediaItem>>,
     ) {
+        // Hosts disagree on where the typed text lands. Searching only the
+        // query argument meant a request that arrives in extras alone was
+        // searched as "" — the car then showed no results at all. The
+        // assistant path already reads both.
+        val searchQuery = resolveCarSearchQuery(query, extras)
         result.detach()
+        if (searchQuery.isBlank()) {
+            result.sendResult(emptyList())
+            return
+        }
         scope.launch {
             val items = runCatching {
-                withContext(Dispatchers.IO) { androidAutoLibrary.search(query) }
+                withContext(Dispatchers.IO) { androidAutoLibrary.search(searchQuery) }
             }.onFailure { error ->
-                android.util.Log.w("MusicPlaybackService", "Android Auto search failed", error)
+                android.util.Log.w("MusicPlaybackService", "Android Auto search failed for \"$searchQuery\"", error)
             }.getOrDefault(emptyList())
             result.sendResult(items)
         }

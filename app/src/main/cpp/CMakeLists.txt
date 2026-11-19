@@ -35,6 +35,13 @@ if(NOT soxr_source_POPULATED)
     set(WITH_CR64S OFF CACHE BOOL "" FORCE)
     set(WITH_PFFFT OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
+    # soxr 0.1.3 hands `EXISTS ${PROJECT_SOURCE_DIR}/lsr-tests` to
+    # cmake_dependent_option(), and CMake (CMP0127 legacy path) splits that
+    # string on spaces. A checkout path containing a space (e.g. "Siti Web")
+    # then aborts configuration with "Unknown arguments specified". Defining
+    # the macro's internal _ISSET guard makes it skip the expression entirely;
+    # LSR tests stay off, exactly as the cache entry above requests.
+    set(BUILD_LSR_TESTS_ISSET 0)
     add_subdirectory("${soxr_source_SOURCE_DIR}" "${soxr_source_BINARY_DIR}" EXCLUDE_FROM_ALL)
     # Android APKs need an unversioned DT_SONAME/file name for reliable
     # packaging and namespace loading of transitive native dependencies.

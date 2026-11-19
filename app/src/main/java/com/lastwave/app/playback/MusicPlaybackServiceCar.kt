@@ -163,6 +163,10 @@ internal fun MusicPlaybackService.playCarMediaId(mediaId: String) {
             }.onFailure { error ->
                 android.util.Log.w("MusicPlaybackService", "Android Auto playback request failed", error)
             }.getOrDefault(false)
+            if (played && mediaId.startsWith(AndroidAutoMediaLibrary.FAVORITE_ACTION_PREFIX)) {
+                notifyCarLibraryChanged(AndroidAutoMediaLibrary.FAVORITES_ID)
+                androidAutoLibrary.favoriteActionParentId(mediaId)?.let { notifyChildrenChangedSafely(it) }
+            }
             if (!played) publishCarPlaybackError("That item is no longer available")
         }
     }
@@ -199,6 +203,10 @@ internal fun MusicPlaybackService.demoteIfIdle() {
 
 internal fun MusicPlaybackService.resolveCarSearchQuery(query: String?, extras: Bundle?): String {
         query?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+        // MediaBrowserCompat.search() carries the text here for hosts that send
+        // it through the extras instead of the query argument.
+        extras?.getString(android.app.SearchManager.QUERY)?.trim()?.takeIf(String::isNotEmpty)
+            ?.let { return it }
         return listOfNotNull(
             extras?.getString(MediaStore.EXTRA_MEDIA_TITLE),
             extras?.getString(MediaStore.EXTRA_MEDIA_ARTIST),
@@ -225,6 +233,8 @@ internal fun MusicPlaybackService.publishCarBrowseState(state: MusicPlayerState)
         if (signature == carBrowseQueueSignature) return
         carBrowseQueueSignature = signature
         notifyCarLibraryChanged(AndroidAutoMediaLibrary.QUEUE_ID)
+        // "Recently played" is built from the play stats, which move with the queue.
+        notifyChildrenChangedSafely(AndroidAutoMediaLibrary.RECENT_ID)
         notifyChildrenChangedSafely(OriginOsMusicCard.LIST_CURRENT)
     }
 

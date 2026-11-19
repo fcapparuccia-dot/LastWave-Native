@@ -74,6 +74,11 @@
         android:largeHeap="true"
         android:enableOnBackInvokedCallback="true">
 
+        <!-- Fixed class name on purpose: the provider is compiled under the
+             module namespace (com.lastwave.app) and CastContext resolves this
+             value with Class.forName(), so it must not follow applicationId -
+             a side-by-side or vivo build would name a package that does not
+             exist and Cast would silently fail to initialize. -->
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.lastwave.app.playback.cast.LastWaveCastOptionsProvider" />

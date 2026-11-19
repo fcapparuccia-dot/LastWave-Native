@@ -243,7 +243,13 @@ android {
     val vivoOrigin = (project.findProperty("vivoOrigin") as? String)?.toBoolean() == true
 
     defaultConfig {
-        applicationId = if (vivoOrigin) "com.tencent.qqmusic" else "com.lastwave.app"
+        // `-PapplicationId=...` installs a side-by-side copy: a debug build can
+        // sit next to a release installed with a different signing key (which
+        // refuses `adb install -r` with INSTALL_FAILED_UPDATE_INCOMPATIBLE)
+        // without wiping the existing app's data. Default stays unchanged.
+        applicationId = (project.findProperty("applicationId") as? String)
+            ?.takeIf { it.isNotBlank() }
+            ?: if (vivoOrigin) "com.tencent.qqmusic" else "com.lastwave.app"
         buildConfigField("boolean", "VIVO_ORIGIN", vivoOrigin.toString())
         minSdk = (project.findProperty("minSdk") as? String)?.toIntOrNull() ?: 29
         targetSdk = 35

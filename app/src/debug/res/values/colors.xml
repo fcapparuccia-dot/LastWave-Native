@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Debug builds only: same mark on a blue field, so a debug install sitting
+         side by side with the release app is tellable apart on the launcher,
+         in the app switcher and on the splash screen (all three render
+         @mipmap/ic_launcher, whose background layer is this color). -->
+    <color name="ic_launcher_background">#FF2979FF</color>
+</resources>
