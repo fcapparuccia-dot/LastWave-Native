@@ -19,7 +19,6 @@ import com.lastwave.app.data.ytmusic.YtMusicLibraryManager
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.every
-import io.mockk.firstArg
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.Flow
