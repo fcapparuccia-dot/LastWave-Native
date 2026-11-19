@@ -7,6 +7,8 @@ name: Build LastWave Debug APK
 # no such secrets, so this job builds the debug variant instead - signed with the
 # runner's debug key and, with the applicationId override, installable next to a
 # release app already on the phone.
+#
+# Manual on purpose: it must not race the release job on every push.
 on:
   workflow_dispatch:
     inputs:
@@ -45,12 +47,11 @@ jobs:
         id: prep_apk
         run: |
           mkdir -p final_apk
-          VERSION=$(grep 'versionName = ' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ -z "$VERSION" ]; then
-            VERSION="5.0.0"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          VERSION=$(grep -m1 -oE 'versionName = "[^"]+"' app/build.gradle.kts | sed -E 's/.*"(.*)"/\1/')
+          [ -n "$VERSION" ] || VERSION="5.0.0"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           cp app/build/outputs/apk/debug/app-debug.apk "final_apk/LastWave-v${VERSION}-debug.apk"
+          (cd final_apk && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
           ls -lh final_apk/
 
       - name: Upload Debug APK
