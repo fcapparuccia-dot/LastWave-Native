@@ -44,10 +44,25 @@ jobs:
       # so without this cache every run signs with a different key and the APK
       # cannot update the previous run's install.
       - name: Restore the debug signing key
+        id: debug_keystore
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.android/debug.keystore
           key: lastwave-ci-debug-keystore-v1
+
+      # actions/cache only saves a path that still exists at the end of the job,
+      # and the first run of this job ended with "Path Validation Error: Path(s)
+      # ... do(es) not exist, hence no cache is being saved" - so the miss would
+      # never turn into a hit. Create the file here, with the alias and passwords
+      # AGP itself uses, so a restored key and a generated key are interchangeable.
+      - name: Create the debug signing key on a cache miss
+        if: steps.debug_keystore.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -noprompt \
+            -keystore ~/.android/debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
@@ -75,10 +90,19 @@ jobs:
           BUILD_TOOLS=$(find "$SDKROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
           if [ -x "$BUILD_TOOLS/apksigner" ]; then
             "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > final_apk/SIGNER.txt
-            cat final_apk/SIGNER.txt
           else
+            echo "apksigner not found under $SDKROOT, APK signature not verified" > final_apk/SIGNER.txt
             echo "::warning::apksigner not found under $SDKROOT, APK signature not verified"
           fi
+          # The same question from the other side: the digest of the key this job
+          # keeps. It has to equal the APK signer digest above, otherwise the APK
+          # is signed by a key that never reaches the cache and the next run's
+          # APK cannot update it. keytool prints A-F and colons, apksigner lower
+          # case without, so normalise to compare by eye.
+          echo "keystore sha256=$(keytool -list -v -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey 2>/dev/null \
+            | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-Z' 'a-z')" >> final_apk/SIGNER.txt
+          cat final_apk/SIGNER.txt
           (cd final_apk && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
           ls -lh final_apk/
 

@@ -112,6 +112,16 @@ The job restores one cached `~/.android/debug.keystore` (cache key `lastwave-ci-
 artifacts share a key and update each other. That key is **not** this machine's `%USERPROFILE%\.android\debug.keystore`,
 so the first CI APK needs one uninstall of the side-by-side app.
 
+`actions/cache` saves a path only if it still exists when the job ends, and the first run of this job ended with
+`Path Validation Error: Path(s) specified in the action for caching do(es) not exist, hence no cache is being saved` —
+a miss that could never become a hit, i.e. the bug this cache exists to fix. The job therefore creates the keystore
+itself on a cache miss (`keytool -genkeypair`, alias `androiddebugkey`, store/key password `android`, the same values
+AGP uses), so a restored key and a generated key are interchangeable.
+
+`SIGNER.txt` carries both sides of the check: the `apksigner` `V2 Signer: certificate SHA-256 digest` of the APK and a
+normalised `keystore sha256=…` line of the cached key. If those two differ, the APK is signed by a key that never
+reaches the cache and the next run's APK will not update it.
+
 A key mismatch is what an OEM installer shows as *"package not installed because it conflicts with an existing package
 on the device"* (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): it reads like a leftover in Settings, and it survives a reboot.
 Check what is really installed — also for other users, because app clones, Secure Folder/Secure Mode and work profiles
