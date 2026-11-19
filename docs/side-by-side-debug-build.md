@@ -256,3 +256,26 @@ Logs and evidence from this session: `build.log`, `install.log`, `verify.log`, `
 5. Optional: make the non-default icon variants (`MainActivityDesktop`/`Black`/`White`) blue in debug too; only the default variant (`.MainActivity`, active now) is blue.
 
 Not verified at all: the app was never run against a real car head unit in this session, and the debug build was exercised only on the phone.
+
+## 7. CI APK onto the phone — verified 2026-11-19
+
+What was actually run end to end on a motorola edge 60 (`ZY22LJS7N3`), after run 3 of the workflow
+(`e1c3834d`, `SIGNER.txt`: APK `V3.0 Signer … 100396dc…` and `keystore sha256=100396dc…`):
+
+1. `adb uninstall com.lastwave.app.debug` — **one time only**, because the copy on the phone had been built
+   with this machine's debug key. The log had `signatures:[75953fef]`, the CI APK is `100396dc…`, so
+   `adb install -r` had already failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package
+   com.lastwave.app.debug signatures do not match newer version`. Users live under two ids (`0` owner,
+   `10` Vault Profile); the app was only in `0`, so a plain uninstall was enough — a work profile needs
+   `adb uninstall --user 10 com.lastwave.app.debug` too.
+2. `adb install` (not `-r`) then reported `Success`, and
+   `dumpsys package com.lastwave.app.debug | grep signatures` became
+   `version:3, signatures:[238704e3]`.
+3. `adb pull /data/app/…/base.apk` and a SHA-256 of it **equals** the artifact's `SHA256SUMS.txt`
+   (`2E833EC0…E535`): a streamed install stores the APK byte for byte, so the package on the phone is the
+   file CI published, signed with the cached key.
+4. The app starts (process `com.lastwave.app.debug` up, first screen is the runtime-permission grant).
+
+The installed signer hash (`238704e3`) is PackageManager's own 32-bit digest of the certificate, not the
+certificate's SHA-256 — compare it only with itself across installs, never with `SIGNER.txt`.
+
