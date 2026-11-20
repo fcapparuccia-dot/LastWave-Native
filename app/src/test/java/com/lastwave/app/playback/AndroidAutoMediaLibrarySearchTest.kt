@@ -123,7 +123,7 @@ class AndroidAutoMediaLibrarySearchTest {
                 } else {
                     emptyList()
                 }
-            YouTubePlaylistResult(id = id, trackCount = tracks.size, tracks = tracks)
+            YouTubePlaylistResult(id = id, title = "Mix", trackCount = tracks.size, tracks = tracks)
         }
 
         val results = library.search("Artist")
