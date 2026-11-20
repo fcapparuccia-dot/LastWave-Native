@@ -28,6 +28,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -132,7 +133,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
         if (cleanQuery.isEmpty()) return emptyList()
 
         val matchingPlaylists = try {
-            getMergedPlaylists().filter { it.title.contains(cleanQuery, ignoreCase = true) }
+            getMergedPlaylists().filter {
+                it.title.contains(cleanQuery, ignoreCase = true) &&
+                    (it.remoteTrackCount ?: it.tracks.size) >= 2
+            }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (_: Exception) {
@@ -148,6 +152,21 @@ class AndroidAutoMediaLibrary @Inject constructor(
             }
             Triple(tracksRequest.await(), albumsRequest.await(), playlistsRequest.await())
         }
+        val (albumsWithTracks, playlistsWithTracks) = coroutineScope {
+            val albumsRequest = async {
+                filterCollectionsWithMultipleTracks(
+                    albums.filter { it.entityId?.isNotBlank() == true }.take(MAX_SEARCH_CATEGORY_RESULTS),
+                    isPlaylist = false,
+                )
+            }
+            val playlistsRequest = async {
+                filterCollectionsWithMultipleTracks(
+                    remotePlaylists.filter { it.entityId?.isNotBlank() == true }.take(MAX_SEARCH_CATEGORY_RESULTS),
+                    isPlaylist = true,
+                )
+            }
+            albumsRequest.await() to playlistsRequest.await()
+        }
         val local = try {
             searchLocalTracks(cleanQuery)
         } catch (cancellation: CancellationException) {
@@ -159,7 +178,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             .distinctBy { "${it.title.lowercase()}|${it.artist.lowercase()}" }
             .take(MAX_SEARCH_RESULTS)
         val playlistResults = (
-            remotePlaylists.filter { it.entityId?.isNotBlank() == true } +
+            playlistsWithTracks +
                 matchingPlaylists.map { playlist ->
                     SearchResultItem(
                         name = playlist.title,
@@ -176,7 +195,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         val page = SearchPage(
             query = cleanQuery,
             tracks = tracks,
-            albums = albums.filter { it.entityId?.isNotBlank() == true }.take(MAX_SEARCH_CATEGORY_RESULTS),
+            albums = albumsWithTracks.take(MAX_SEARCH_CATEGORY_RESULTS),
             playlists = playlistResults,
         )
         synchronized(searchPages) { searchPages[pageToken] = page }
@@ -200,6 +219,25 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 add(playableItem("$SEARCH_PREFIX$pageToken:$index", track))
             }
         }
+    }
+
+    private suspend fun filterCollectionsWithMultipleTracks(
+        items: List<SearchResultItem>,
+        isPlaylist: Boolean,
+    ): List<SearchResultItem> = coroutineScope {
+        items.map { item ->
+            async(Dispatchers.IO) {
+                val entityId = item.entityId ?: return@async null
+                val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+                    if (isPlaylist) {
+                        innerTube.fetchPlaylist(entityId, maxTracks = 2)?.tracks.orEmpty()
+                    } else {
+                        searchRepository.songsFor(item, limit = 2)
+                    }
+                }.orEmpty()
+                item.takeIf { tracks.distinctBy(YouTubeMusicTrack::videoId).size >= 2 }
+            }
+        }.awaitAll().filterNotNull()
     }
 
     suspend fun playMediaId(mediaId: String, player: MusicPlayer): Boolean = when {

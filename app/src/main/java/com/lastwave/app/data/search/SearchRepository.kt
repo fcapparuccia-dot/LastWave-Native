@@ -234,8 +234,8 @@ class SearchRepository @Inject constructor(
     }
 
     /** Returns the native-playable tracks behind a YT Music artist/album result. */
-    suspend fun songsFor(item: SearchResultItem): List<YouTubeMusicTrack> =
-        item.entityId?.takeIf(String::isNotBlank)?.let { innerTube.browseSongs(it) }.orEmpty()
+    suspend fun songsFor(item: SearchResultItem, limit: Int? = null): List<YouTubeMusicTrack> =
+        item.entityId?.takeIf(String::isNotBlank)?.let { innerTube.browseSongs(it, limit = limit) }.orEmpty()
 
     /**
      * Builds playback continuation for a selected search result without

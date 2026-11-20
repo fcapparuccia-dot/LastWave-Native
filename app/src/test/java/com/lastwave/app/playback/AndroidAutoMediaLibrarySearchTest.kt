@@ -4,12 +4,15 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
+import com.lastwave.app.data.generate.GeneratedTrack
+import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.music.InnerTubeMusicApi
+import com.lastwave.app.data.music.YouTubePlaylistResult
 import com.lastwave.app.data.music.YouTubeMusicTrack
-import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
+import com.lastwave.app.data.playlist.SavedPlaylist
 import com.lastwave.app.data.repository.ArtistRepository
 import com.lastwave.app.data.repository.SongPlayStatsRepository
 import com.lastwave.app.data.search.SearchRepository
@@ -35,11 +38,12 @@ import org.robolectric.annotation.Config
 @Config(sdk = [33], manifest = Config.NONE)
 class AndroidAutoMediaLibrarySearchTest {
     @Test
-    fun searchShowsCategoriesBeforeSongsAndAllowsSavingAnAlbum() = runBlocking {
+    fun searchShowsOnlyMultiTrackCollectionsAndAllowsSavingAnAlbum() = runBlocking {
         val searchRepository = mockk<SearchRepository>()
         val playlistRepository = mockk<PlaylistRepository>(relaxed = true)
         val libraryManager = mockk<YtMusicLibraryManager>()
         val artistRepository = mockk<ArtistRepository>(relaxed = true)
+        val innerTube = mockk<InnerTubeMusicApi>(relaxed = true)
         val favorites = CarMediaFavorites(MemoryPreferences())
         val library = AndroidAutoMediaLibrary(
             context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
@@ -47,7 +51,7 @@ class AndroidAutoMediaLibrarySearchTest {
             ytMusicLibraryManager = libraryManager,
             downloadedTrackDao = mockk<DownloadedTrackDao>(relaxed = true),
             searchRepository = searchRepository,
-            innerTube = mockk<InnerTubeMusicApi>(relaxed = true),
+            innerTube = innerTube,
             carMediaFavorites = favorites,
             artistRepository = artistRepository,
             statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
@@ -59,21 +63,62 @@ class AndroidAutoMediaLibrarySearchTest {
             artworkUrl = "https://example.com/album.jpg",
             entityId = "MPRE123",
         )
-        coEvery { playlistRepository.getAll() } returns emptyList()
+        val singleTrackAlbum = SearchResultItem(name = "Single-track album", entityId = "MPREsingle")
+        val playlist = SearchResultItem(name = "Mix", artist = "Artist", entityId = "PL123")
+        val singleTrackPlaylist = SearchResultItem(name = "Long mix", entityId = "PLlong")
+        coEvery { playlistRepository.getAll() } returns listOf(
+            SavedPlaylist(
+                id = 1L,
+                title = "Artist long mix",
+                subtitle = "",
+                mode = "",
+                tracks = listOf(GeneratedTrack(name = "Long mix", artist = "Artist", durationMs = 7_200_000L)),
+                createdAtMillis = 1L,
+            ),
+        )
         every { libraryManager.playlists } returns MutableStateFlow(emptyList())
         coEvery { searchRepository.search(any(), "Artist") } coAnswers {
             when (firstArg<SearchTab>()) {
                 SearchTab.TRACKS -> listOf(SearchResultItem(name = "Single", artist = "Artist", videoId = "video123"))
-                SearchTab.ALBUMS -> listOf(album)
-                SearchTab.PLAYLISTS -> listOf(
-                    SearchResultItem(name = "Mix", artist = "Artist", entityId = "PL123"),
-                )
+                SearchTab.ALBUMS -> listOf(album, singleTrackAlbum)
+                SearchTab.PLAYLISTS -> listOf(playlist, singleTrackPlaylist)
                 else -> emptyList()
             }
         }
-        coEvery { searchRepository.songsFor(album) } returns listOf(
-            YouTubeMusicTrack(videoId = "albumSong", title = "Album song", artist = "Artist"),
-        )
+        coEvery { searchRepository.songsFor(any(), any()) } coAnswers {
+            if (firstArg<SearchResultItem>().name == "Album") {
+                listOf(
+                    YouTubeMusicTrack(videoId = "albumSong", title = "Album song", artist = "Artist"),
+                    YouTubeMusicTrack(videoId = "albumSong2", title = "Album song 2", artist = "Artist"),
+                )
+            } else {
+                listOf(
+                    YouTubeMusicTrack(
+                        videoId = "singleAlbumSong",
+                        title = "Long mix",
+                        artist = "Artist",
+                        durationSeconds = 7_200,
+                    ),
+                )
+            }
+        }
+        coEvery { innerTube.fetchPlaylist(any(), maxTracks = any()) } coAnswers {
+            val id = firstArg<String>()
+            val tracks = listOf(
+                YouTubeMusicTrack(
+                    videoId = "playlistSong",
+                    title = "Long mix",
+                    artist = "Artist",
+                    durationSeconds = 7_200,
+                ),
+            ) +
+                if (id == "PL123") {
+                    listOf(YouTubeMusicTrack(videoId = "playlistSong2", title = "Song 2", artist = "Artist"))
+                } else {
+                    emptyList()
+                }
+            YouTubePlaylistResult(id = id, trackCount = tracks.size, tracks = tracks)
+        }
 
         val results = library.search("Artist")
         assertEquals(
@@ -81,6 +126,9 @@ class AndroidAutoMediaLibrarySearchTest {
             results.map { it.description.title.toString() },
         )
         val albumFolder = library.loadChildren(results[0].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Album"), albumFolder.map { it.description.title.toString() })
+        val playlistFolder = library.loadChildren(results[1].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Mix"), playlistFolder.map { it.description.title.toString() })
         val albumChildren = library.loadChildren(albumFolder[0].description.mediaId!!, MusicPlayerState())
         val saveAction = albumChildren.first()
         assertEquals("♡ Save to favorites", saveAction.description.title.toString())
