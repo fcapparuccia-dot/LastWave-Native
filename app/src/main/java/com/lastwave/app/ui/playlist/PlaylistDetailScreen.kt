@@ -807,6 +807,7 @@ fun PlaylistDetailScreen(
                                         startIndex = safeIndex,
                                         sourceLabel = playlist.title,
                                         startShuffled = playbackState.shuffleEnabled,
+                                        playlistId = playlist.id,
                                     )
                                 }
                             },

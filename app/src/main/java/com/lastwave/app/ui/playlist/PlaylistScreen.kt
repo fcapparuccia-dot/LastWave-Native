@@ -382,6 +382,7 @@ fun PlaylistScreen(
                                                 startIndex = 0,
                                                 sourceLabel = localSongsPlaylist.title,
                                                 enableRadioContinuation = false,
+                                                playlistId = localSongsPlaylist.id,
                                             )
                                         },
                                     )
@@ -494,6 +495,7 @@ fun PlaylistScreen(
                                             playlist.tracks.map(GeneratedTrack::toPlayableTrack),
                                             startIndex = 0,
                                             sourceLabel = playlist.title,
+                                            playlistId = playlist.id,
                                         )
                                     },
                                     isSelected = selectedPlaylists.contains(playlist.id),

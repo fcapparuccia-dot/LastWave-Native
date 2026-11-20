@@ -171,6 +171,20 @@ internal fun MusicPlaybackService.playCarMediaId(mediaId: String) {
         }
     }
 
+internal fun MusicPlaybackService.playCarArtistRadio() {
+        val track = musicPlayer.state.value.current ?: return
+        scope.launch {
+            val played = runCatching {
+                withContext(Dispatchers.IO) {
+                    androidAutoLibrary.playArtistRadio(track.artist, track, musicPlayer)
+                }
+            }.onFailure { error ->
+                android.util.Log.w("MusicPlaybackService", "Artist radio request failed", error)
+            }.getOrDefault(false)
+            if (!played) publishCarPlaybackError("Artist radio unavailable")
+        }
+    }
+
 internal fun MusicPlaybackService.playCarSearch(query: String) {
         scope.launch {
             val played = runCatching {

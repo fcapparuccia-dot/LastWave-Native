@@ -8,11 +8,14 @@ import com.lastwave.app.data.generate.GeneratedTrack
 import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.music.InnerTubeMusicApi
+import com.lastwave.app.data.music.MoodsRepository
 import com.lastwave.app.data.music.YouTubePlaylistResult
 import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
+import com.lastwave.app.data.playlist.RecentPlaylistStore
 import com.lastwave.app.data.playlist.SavedPlaylist
+import com.lastwave.app.data.podcast.PodcastRepository
 import com.lastwave.app.data.repository.ArtistRepository
 import com.lastwave.app.data.repository.SongPlayStatsRepository
 import com.lastwave.app.data.search.SearchRepository
@@ -55,6 +58,9 @@ class AndroidAutoMediaLibrarySearchTest {
             carMediaFavorites = favorites,
             artistRepository = artistRepository,
             statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
+            moodsRepository = mockk<MoodsRepository>(relaxed = true),
+            podcastRepository = mockk<PodcastRepository>(relaxed = true),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         val album = SearchResultItem(
@@ -138,7 +144,14 @@ class AndroidAutoMediaLibrarySearchTest {
         val refreshedChildren = library.loadChildren(albumFolder[0].description.mediaId!!, MusicPlayerState())
         assertEquals("♥ Remove from favorites", refreshedChildren.first().description.title.toString())
         val root = library.loadChildren(AndroidAutoMediaLibrary.ROOT_ID, MusicPlayerState())
-        assertTrue(root.any { it.description.title == "Favorites" })
+        assertEquals(
+            listOf("Home", "Recenti", "Sfoglia", "Libreria"),
+            root.map { it.description.title.toString() },
+        )
+        val libraryFolder = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ID, MusicPlayerState())
+        assertTrue(libraryFolder.any { it.description.title == "Preferiti" })
+        val savedAlbums = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID, MusicPlayerState())
+        assertEquals(listOf("Album"), savedAlbums.map { it.description.title.toString() })
 
         val radioFolder = results[2]
         val radioItems = library.loadChildren(radioFolder.description.mediaId!!, MusicPlayerState())

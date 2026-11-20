@@ -98,6 +98,7 @@ internal const val ACTION_TOGGLE = "com.lastwave.app.playback.TOGGLE"
 internal const val ACTION_NEXT = "com.lastwave.app.playback.NEXT"
 internal const val ACTION_LIKE = "com.lastwave.app.playback.LIKE"
 internal const val ACTION_SHUFFLE = "com.lastwave.app.playback.SHUFFLE"
+internal const val ACTION_ARTIST_RADIO = "com.lastwave.app.playback.ARTIST_RADIO"
 internal const val ACTION_REPEAT = "com.lastwave.app.playback.REPEAT"
 internal const val ACTION_STOP = "com.lastwave.app.playback.STOP"
 
@@ -282,6 +283,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
                         when (action) {
                             ACTION_LIKE -> toggleNotificationLike()
                             ACTION_SHUFFLE -> musicPlayer.toggleShuffle()
+                            ACTION_ARTIST_RADIO -> playCarArtistRadio()
                             OriginOsMusicCard.ACTION_PLAY_MODE ->
                                 setOriginOsLoopMode(extras?.getInt(OriginOsMusicCard.KEY_LOOP_MODE) ?: 0)
                         }
@@ -768,6 +770,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         const val ACTION_NEXT = "com.lastwave.app.playback.NEXT"
         const val ACTION_LIKE = "com.lastwave.app.playback.LIKE"
         const val ACTION_SHUFFLE = "com.lastwave.app.playback.SHUFFLE"
+        const val ACTION_ARTIST_RADIO = "com.lastwave.app.playback.ARTIST_RADIO"
         const val ACTION_REPEAT = "com.lastwave.app.playback.REPEAT"
         const val ACTION_STOP = "com.lastwave.app.playback.STOP"
     }

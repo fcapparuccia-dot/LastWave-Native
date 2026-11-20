@@ -10,11 +10,19 @@ import com.lastwave.app.data.generate.LocalAudioFormats
 import com.lastwave.app.data.generate.youtubeVideoIdOrNull
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.local.db.DownloadedTrackEntity
+import com.lastwave.app.data.music.HomeShelfItem
 import com.lastwave.app.data.music.InnerTubeMusicApi
+import com.lastwave.app.data.music.MoodGroup
+import com.lastwave.app.data.music.MoodTile
+import com.lastwave.app.data.music.MoodsRepository
 import com.lastwave.app.data.music.YouTubeMusicTrack
+import com.lastwave.app.data.music.YouTubePlaylistSummary
+import com.lastwave.app.data.podcast.PodcastRepository
+import com.lastwave.app.data.podcast.toPlayableTrack
 import com.lastwave.app.data.playlist.CarMediaFavorite
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
+import com.lastwave.app.data.playlist.RecentPlaylistStore
 import com.lastwave.app.data.playlist.SavedPlaylist
 import com.lastwave.app.data.playlist.isYouTubeOnly
 import com.lastwave.app.data.repository.ArtistRepository
@@ -52,6 +60,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val carMediaFavorites: CarMediaFavorites,
     private val artistRepository: ArtistRepository,
     private val statsRepository: SongPlayStatsRepository,
+    private val moodsRepository: MoodsRepository,
+    private val podcastRepository: PodcastRepository,
+    private val recentPlaylistStore: RecentPlaylistStore,
     // Lazy: the chart node is the only consumer, and building the whole
     // recommendation pipeline for a widget tap or a browse root would cost
     // more than the node it feeds.
@@ -78,6 +89,15 @@ class AndroidAutoMediaLibrary @Inject constructor(
     // download, no history. Cached so reopening the node in a car is instant.
     @Volatile private var chartTracks: List<PlayableTrack> = emptyList()
     @Volatile private var chartFetchedAtMillis = 0L
+    // Moods/genres: the browse tab resolves the same page on every ignition,
+    // so both the tile list and each opened genre page are kept for a while.
+    @Volatile private var cachedMoodGroups: List<MoodGroup>? = null
+    @Volatile private var moodGroupsFetchedAtMillis = 0L
+    private val browseCategories = object : LinkedHashMap<String, List<YouTubePlaylistSummary>>(8, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, List<YouTubePlaylistSummary>>?,
+        ): Boolean = size > MAX_CACHED_BROWSES
+    }
     val playlistChanges: Flow<Unit>
         get() = merge(
             playlistRepository.changes,
@@ -87,11 +107,19 @@ class AndroidAutoMediaLibrary @Inject constructor(
 
     suspend fun loadChildren(parentId: String, state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> =
         when {
-            parentId == ROOT_ID -> rootItems(state)
+            parentId == ROOT_ID -> rootItems()
+            parentId == HOME_ID -> homeItems(state)
+            parentId == RECENT_ID -> recentItems()
+            parentId == BROWSE_ID -> browseGroupItems()
+            parentId.startsWith(BROWSE_GROUP_PREFIX) -> browseTileItems(parentId)
+            parentId.startsWith(BROWSE_TILE_PREFIX) -> browseCategoryItems(parentId)
+            parentId.startsWith(BROWSE_PLAYLIST_PREFIX) -> browsePlaylistChildren(parentId)
+            parentId == LIBRARY_ID -> libraryItems()
+            parentId == LIBRARY_ALBUMS_ID -> savedAlbums().map(::favoriteItem)
+            parentId == LIBRARY_ARTISTS_ID -> artistItems()
+            parentId == LIBRARY_PODCASTS_ID -> podcastShowItems()
+            parentId.startsWith(PODCAST_SHOW_PREFIX) -> podcastShowChildren(parentId)
             parentId == QUEUE_ID -> state.queue.mapIndexed(::queueTrackItem)
-            parentId == RECENT_ID -> recentlyPlayedTracks().mapIndexed { index, track ->
-                playableItem("$RECENT_PREFIX$index", track)
-            }
             parentId == CHARTS_ID -> charts().mapIndexed { index, track ->
                 playableItem("$CHART_PREFIX$index", track)
             }
@@ -245,6 +273,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         mediaId == DOWNLOADS_ID -> playDownloads(player)
         mediaId.startsWith(FAVORITE_ACTION_PREFIX) -> handleFavoriteAction(mediaId)
         mediaId.startsWith(SEARCH_RADIO_PLAY_PREFIX) -> playSearchRadio(mediaId, player)
+        mediaId.startsWith(ARTIST_RADIO_PREFIX) ->
+            playArtistRadio(decodeEntityId(mediaId.removePrefix(ARTIST_RADIO_PREFIX)).orEmpty(), null, player)
         mediaId == RECENT_ID -> playQueueFrom(recentlyPlayedTracks(), 0, "Recently played", player)
         mediaId == CHARTS_ID -> playQueueFrom(charts(), 0, "Popular now", player)
         mediaId.startsWith(RECENT_PREFIX) -> playQueueFrom(
@@ -703,17 +733,25 @@ class AndroidAutoMediaLibrary @Inject constructor(
         return runCatching { ytMusicLibraryManager.loadDetail(playlistId) }.getOrNull() ?: local
     }
 
-    private suspend fun rootItems(state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> = buildList {
+    /** Spotify-shaped root: four browsable tabs, nothing else. */
+    private fun rootItems(): List<MediaBrowserCompat.MediaItem> = listOf(
+        browsableItem(HOME_ID, "Home", "Novità, classifiche e ultimi ascolti"),
+        browsableItem(RECENT_ID, "Recenti", "Brani e playlist ascoltati di recente"),
+        browsableItem(BROWSE_ID, "Sfoglia", "Cerca per genere musicale"),
+        browsableItem(LIBRARY_ID, "Libreria", "Playlist, album, artisti e podcast"),
+    )
+
+    private suspend fun homeItems(state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> = buildList {
         add(
             browsableItem(
                 mediaId = QUEUE_ID,
-                title = "Up next",
-                subtitle = if (state.queue.isEmpty()) "No active queue" else trackCountLabel(state.queue.size),
+                title = "In riproduzione",
+                subtitle = if (state.queue.isEmpty()) "Nessuna coda attiva" else trackCountLabel(state.queue.size),
                 playable = state.current != null,
             ),
         )
         // Liked Songs and Local songs are ordinary saved playlists: pointing the
-        // root straight at their media ids reuses the playlist node, its track
+        // tab straight at their media ids reuses the playlist node, its track
         // list and its voice playback instead of duplicating them here.
         runCatching { playlistRepository.getLikedSongs() }.getOrNull()
             ?.takeIf { it.tracks.isNotEmpty() }
@@ -732,8 +770,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         add(
             browsableItem(
                 mediaId = CHARTS_ID,
-                title = "Popular now",
-                subtitle = "Trending on YouTube Music",
+                title = "Popolari ora",
+                subtitle = "Di tendenza su YouTube Music",
             ),
         )
         val recent = runCatching { recentlyPlayedTracks() }.getOrDefault(emptyList())
@@ -741,23 +779,16 @@ class AndroidAutoMediaLibrary @Inject constructor(
             add(
                 browsableItem(
                     mediaId = RECENT_ID,
-                    title = "Recently played",
+                    title = "Ascoltati di recente",
                     subtitle = trackCountLabel(recent.size),
                 ),
             )
         }
         add(
             browsableItem(
-                mediaId = PLAYLISTS_ID,
-                title = "Playlists",
-                subtitle = "Your saved mixes and playlists",
-            ),
-        )
-        add(
-            browsableItem(
                 mediaId = DOWNLOADS_ID,
-                title = "Downloads",
-                subtitle = "Music available offline",
+                title = "Download",
+                subtitle = "Musica disponibile offline",
                 playable = true,
             ),
         )
@@ -767,7 +798,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 add(
                     browsableItem(
                         mediaId = "$PLAYLIST_PREFIX${local.id}",
-                        title = "On this device",
+                        title = "Su questo dispositivo",
                         subtitle = trackCountLabel(local.tracks.size),
                         iconUri = local.coverUri(),
                     ),
@@ -778,12 +809,224 @@ class AndroidAutoMediaLibrary @Inject constructor(
             add(
                 browsableItem(
                     mediaId = FAVORITES_ID,
-                    title = "Favorites",
-                    subtitle = "${favorites.size} saved albums and playlists",
+                    title = "Preferiti",
+                    subtitle = "${favorites.size} album e playlist salvati",
                 ),
             )
         }
     }
+
+    /** Playlists first, then songs: the two things the tab promises. */
+    private suspend fun recentItems(): List<MediaBrowserCompat.MediaItem> = buildList {
+        runCatching { recentPlaylistStore.getAll() }.getOrDefault(emptyList()).forEach { recent ->
+            add(
+                browsableItem(
+                    mediaId = "$PLAYLIST_PREFIX${recent.id}",
+                    title = recent.title,
+                    subtitle = "Playlist",
+                    iconUri = recent.artworkUrl,
+                ),
+            )
+        }
+        recentlyPlayedTracks().forEachIndexed { index, track ->
+            add(playableItem("$RECENT_PREFIX$index", track))
+        }
+    }
+
+    private suspend fun browseGroupItems(): List<MediaBrowserCompat.MediaItem> =
+        // Indexed on the unfiltered list: the media id carries that index, so
+        // skipping an empty group here must not renumber the others.
+        moodGroups().withIndex()
+            .filter { (_, group) -> group.tiles.isNotEmpty() }
+            .map { (index, group) ->
+                browsableItem(
+                    mediaId = "$BROWSE_GROUP_PREFIX$index",
+                    title = group.title,
+                    subtitle = if (group.tiles.size == 1) "1 genere" else "${group.tiles.size} generi",
+                )
+            }
+
+    private suspend fun browseTileItems(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val groupIndex = parentId.removePrefix(BROWSE_GROUP_PREFIX).toIntOrNull() ?: return emptyList()
+        val group = moodGroups().getOrNull(groupIndex) ?: return emptyList()
+        // Ids carry the tile's position rather than a session token: going back
+        // to the genre list and reopening a genre resolves the same tile (and
+        // the same cached playlist page) instead of fetching it again.
+        return group.tiles.mapIndexed { tileIndex, tile ->
+            browsableItem("$BROWSE_TILE_PREFIX$groupIndex:$tileIndex", tile.label, "Playlist del genere")
+        }
+    }
+
+    private suspend fun browseCategoryItems(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val parts = parentId.removePrefix(BROWSE_TILE_PREFIX).split(':', limit = 2)
+        val groupIndex = parts.getOrNull(0)?.toIntOrNull() ?: return emptyList()
+        val tileIndex = parts.getOrNull(1)?.toIntOrNull() ?: return emptyList()
+        val tile = moodGroups().getOrNull(groupIndex)?.tiles?.getOrNull(tileIndex) ?: return emptyList()
+        val token = "$groupIndex:$tileIndex"
+        return browseCategoryPlaylists(token, tile).mapIndexed { index, summary ->
+            browsableItem(
+                mediaId = "$BROWSE_PLAYLIST_PREFIX$token:$index",
+                title = summary.title,
+                subtitle = summary.author.orEmpty(),
+                iconUri = summary.artworkUrl,
+            )
+        }
+    }
+
+    private suspend fun browsePlaylistChildren(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        // The token is "<group>:<tile>", so the playlist index is last.
+        val rest = parentId.removePrefix(BROWSE_PLAYLIST_PREFIX)
+        val separator = rest.lastIndexOf(':')
+        if (separator <= 0) return emptyList()
+        val token = rest.substring(0, separator)
+        val index = rest.substring(separator + 1).toIntOrNull() ?: return emptyList()
+        val summary = synchronized(browseCategories) { browseCategories[token]?.getOrNull(index) }
+            ?: return emptyList()
+        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+            innerTube.fetchPlaylist(summary.id, maxTracks = MAX_SEARCH_RESULTS)
+        }?.tracks.orEmpty().map { it.toPlayableTrack(summary.author, summary.title) }
+        if (tracks.isEmpty()) return emptyList()
+        val queueToken = cacheTracks(tracks)
+        return tracks.mapIndexed { trackIndex, track ->
+            playableItem("$SEARCH_PREFIX$queueToken:$trackIndex", track)
+        }
+    }
+
+    /** Genre/mood page of the browse tab, fetched once per car session. */
+    private suspend fun moodGroups(): List<MoodGroup> {
+        val cached = cachedMoodGroups
+        if (cached != null && System.currentTimeMillis() - moodGroupsFetchedAtMillis < MOOD_CACHE_MS) {
+            return cached
+        }
+        val fresh = bounded(MOOD_NETWORK_BUDGET_MS) { moodsRepository.fetchGroups() }.orEmpty()
+        if (fresh.isEmpty()) return cached.orEmpty()
+        cachedMoodGroups = fresh
+        moodGroupsFetchedAtMillis = System.currentTimeMillis()
+        return fresh
+    }
+
+    private suspend fun browseCategoryPlaylists(
+        token: String,
+        tile: MoodTile,
+    ): List<YouTubePlaylistSummary> {
+        synchronized(browseCategories) { browseCategories[token] }?.let { return it }
+        val playlists = bounded(MOOD_CATEGORY_BUDGET_MS) {
+            moodsRepository.fetchCategory(tile.browseId, tile.params)
+        }?.shelves.orEmpty()
+            .flatMap { shelf -> shelf.items.filterIsInstance<HomeShelfItem.Playlist>().map { it.playlist } }
+            .distinctBy { it.id }
+            .take(MAX_BROWSE_PLAYLISTS)
+        if (playlists.isNotEmpty()) synchronized(browseCategories) { browseCategories[token] = playlists }
+        return playlists
+    }
+
+    private suspend fun libraryItems(): List<MediaBrowserCompat.MediaItem> = buildList {
+        add(browsableItem(PLAYLISTS_ID, "Playlist", "Le tue playlist e i mix salvati"))
+        val albums = savedAlbums()
+        add(
+            browsableItem(
+                mediaId = LIBRARY_ALBUMS_ID,
+                title = "Album salvati",
+                subtitle = if (albums.isEmpty()) "Nessun album salvato" else "${albums.size} album",
+            ),
+        )
+        val artists = topArtists()
+        add(
+            browsableItem(
+                mediaId = LIBRARY_ARTISTS_ID,
+                title = "Artisti",
+                subtitle = if (artists.isEmpty()) {
+                    "Ascolta qualcosa per popolare la lista"
+                } else {
+                    "${artists.size} artisti dai tuoi ascolti"
+                },
+            ),
+        )
+        if (runCatching { podcastRepository.isEnabledNow() }.getOrDefault(false)) {
+            add(browsableItem(LIBRARY_PODCASTS_ID, "Podcast e show", "I tuoi show"))
+        }
+    }
+
+    private suspend fun savedAlbums(): List<CarMediaFavorite> =
+        carMediaFavorites.getAll().filter { it.type == "album" }
+
+    /** One row per artist the listening history knows, most listened first. */
+    private suspend fun topArtists(limit: Int = MAX_BROWSE_ARTISTS): List<CarArtist> =
+        runCatching { statsRepository.mostPlayedSince(days = 90, limit = 200) }.getOrDefault(emptyList())
+            .filter { it.artist.isNotBlank() && !it.videoId.isNullOrBlank() }
+            .groupBy { it.artist.trim() }
+            .entries
+            .sortedByDescending { entry -> entry.value.sumOf { it.totalPlayTimeMs } }
+            .take(limit)
+            .map { entry ->
+                CarArtist(
+                    name = entry.key,
+                    artworkUrl = entry.value.maxByOrNull { it.lastPlayedAtMillis }?.artworkUrl,
+                )
+            }
+
+    private suspend fun artistItems(): List<MediaBrowserCompat.MediaItem> =
+        topArtists().map { artist ->
+            // The app has no follow model, so this lists the artists the
+            // listening history actually knows and starts their radio on tap.
+            // Playable-only on purpose: a browsable flag would make every car
+            // host draw a chevron into a page that has no children.
+            MediaBrowserCompat.MediaItem(
+                MediaDescriptionCompat.Builder()
+                    .setMediaId("$ARTIST_RADIO_PREFIX${encodeEntityId(artist.name)}")
+                    .setTitle(artist.name)
+                    .setSubtitle("Radio dell'artista")
+                    .setIconUri(artist.artworkUrl?.toSafeUri() ?: appIconUri())
+                    .build(),
+                MediaBrowserCompat.MediaItem.FLAG_PLAYABLE,
+            )
+        }
+
+    private suspend fun podcastShowItems(): List<MediaBrowserCompat.MediaItem> {
+        if (!runCatching { podcastRepository.isEnabledNow() }.getOrDefault(false)) return emptyList()
+        return bounded(MOOD_NETWORK_BUDGET_MS) { podcastRepository.home() }.orEmpty()
+            .flatMap { it.shows }
+            .distinctBy { it.showId }
+            .take(MAX_BROWSE_PODCASTS)
+            .map { show ->
+                browsableItem(
+                    mediaId = "$PODCAST_SHOW_PREFIX${encodeEntityId(show.showId)}",
+                    title = show.title,
+                    subtitle = show.publisher.orEmpty(),
+                    iconUri = show.artworkUrl,
+                )
+            }
+    }
+
+    private suspend fun podcastShowChildren(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val showId = decodeEntityId(parentId.removePrefix(PODCAST_SHOW_PREFIX)) ?: return emptyList()
+        val page = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) { podcastRepository.show(showId) }
+            ?: return emptyList()
+        val tracks = page.episodes.map { episode -> episode.toPlayableTrack() }
+        if (tracks.isEmpty()) return emptyList()
+        val token = cacheTracks(tracks)
+        return tracks.mapIndexed { index, track ->
+            playableItem("$SEARCH_PREFIX$token:$index", track)
+        }
+    }
+
+    /**
+     * Starts an artist radio from [seed] (the song now playing) or from the
+     * artist alone. Used by the library rows and by the car's session action,
+     * so both paths publish the same queue label and fallbacks.
+     */
+    suspend fun playArtistRadio(artistName: String, seed: PlayableTrack?, player: MusicPlayer): Boolean {
+        val artist = artistName.trim()
+        if (artist.isEmpty()) return false
+        val tracks = bounded(ARTIST_RADIO_NETWORK_BUDGET_MS) {
+            artistRepository.getArtistRadio(artist, seed)
+        }.orEmpty().ifEmpty { listOfNotNull(seed) }
+        if (tracks.isEmpty()) return false
+        player.playQueue(tracks, startIndex = 0, sourceLabel = "$artist Radio")
+        return true
+    }
+
+    private data class CarArtist(val name: String, val artworkUrl: String?)
 
     private fun playQueueFrom(
         tracks: List<PlayableTrack>,
@@ -837,6 +1080,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             tracks = tracks,
             startIndex = index?.coerceIn(tracks.indices) ?: 0,
             sourceLabel = playlist.title,
+            playlistId = playlist.id,
         )
         return true
     }
@@ -1017,6 +1261,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
 
     companion object {
         const val ROOT_ID = "lastwave_root"
+        const val HOME_ID = "category:home"
+        const val BROWSE_ID = "category:browse"
+        const val LIBRARY_ID = "category:library"
         const val QUEUE_ID = "category:queue"
         const val PLAYLISTS_ID = "category:playlists"
         const val DOWNLOADS_ID = "category:downloads"
@@ -1040,7 +1287,24 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val SAVED_PLAYLIST_FAVORITE_TYPE = "saved_playlist"
         private const val RECENT_PREFIX = "recent:"
         private const val CHART_PREFIX = "chart:"
+        // Spotify-shaped tabs: Home / Recenti / Sfoglia / Libreria.
+        const val LIBRARY_ALBUMS_ID = "category:library:albums"
+        private const val LIBRARY_ARTISTS_ID = "category:library:artists"
+        private const val LIBRARY_PODCASTS_ID = "category:library:podcasts"
+        private const val BROWSE_GROUP_PREFIX = "browse:group:"
+        private const val BROWSE_TILE_PREFIX = "browse:tile:"
+        private const val BROWSE_PLAYLIST_PREFIX = "browse:playlist:"
+        private const val ARTIST_RADIO_PREFIX = "artist-radio:"
+        private const val PODCAST_SHOW_PREFIX = "podcast-show:"
         private const val MAX_CACHED_SEARCHES = 6
+        private const val MAX_CACHED_BROWSES = 6
+        private const val MAX_BROWSE_PLAYLISTS = 40
+        private const val MAX_BROWSE_ARTISTS = 30
+        private const val MAX_BROWSE_PODCASTS = 40
+        private const val MOOD_CACHE_MS = 60 * 60 * 1000L
+        private const val MOOD_NETWORK_BUDGET_MS = 8_000L
+        private const val MOOD_CATEGORY_BUDGET_MS = 10_000L
+        private const val ARTIST_RADIO_NETWORK_BUDGET_MS = 12_000L
         private const val MAX_SEARCH_RESULTS = 30
         private const val MAX_SEARCH_CATEGORY_RESULTS = 20
         private const val RECENT_LIMIT = 50

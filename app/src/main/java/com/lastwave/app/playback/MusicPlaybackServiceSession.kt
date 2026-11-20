@@ -420,9 +420,13 @@ internal fun MusicPlaybackService.publishSystemState(state: MusicPlayerState) {
                     )
                     .apply {
                         // Android 13+ takes the two outer buttons from session custom actions.
+                        // Order matters: like and artist radio are the pair a car
+                        // driver reaches for; shuffle stays third for hosts with
+                        // a third slot.
                         if (track != null) {
                             addCustomAction(ACTION_LIKE, if (isLiked) "Unlike song" else "Like song",
                                 if (isLiked) R.drawable.ic_wave_widget_favorite_filled else R.drawable.ic_wave_widget_favorite)
+                            addCustomAction(ACTION_ARTIST_RADIO, "Artist radio", R.drawable.ic_car_artist_radio)
                             addCustomAction(ACTION_SHUFFLE, if (state.shuffleEnabled) "Turn shuffle off" else "Turn shuffle on",
                                 R.drawable.ic_widget_shuffle)
                         }

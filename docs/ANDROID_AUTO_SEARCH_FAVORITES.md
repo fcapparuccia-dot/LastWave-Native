@@ -25,17 +25,61 @@ L'azione di salvataggio è una voce selezionabile dentro l'album o la playlist,
 non un pulsante cuore accanto a ogni riga: la UI standard di Android Auto non
 espone controlli personalizzati per ciascun elemento sfogliabile.
 
-## File interessati
+## Layout a schede come Spotify
+
+La radice di Android Auto ora espone quattro schede, nello stesso ordine che un
+utente Spotify ritrova in auto:
+
+| Scheda | Contenuto (`loadChildren`) |
+|---|---|
+| **Home** | brano/coda in riproduzione, Liked Songs, **Popolari ora**, ascoltati di recente, Download, musica locale, **Preferiti** (solo se non vuoto) |
+| **Recenti** | playlist avviate davvero (dalla più recente), poi i brani ascoltati di recente |
+| **Sfoglia** | gruppi di generi/mood di YouTube Music → generi → playlist del genere → brani |
+| **Libreria** | Playlist salvate, Album salvati, Artisti (dalla cronologia di ascolto), Podcast e show |
+
+La cronologia delle playlist non è deducibile da `SongPlayStatsRepository`, che
+conosce solo i brani: `RecentPlaylistStore` la registra nel momento in cui una
+coda di playlist parte (`MusicPlayer.playQueue(..., playlistId = ...)`), la
+deduplica e la limita a 12 voci. Sfoglia e le pagine dei generi sono tenute in
+cache (una ora per l'elenco dei gruppi, LRU per generi e playlist) perché ogni
+accensione dell'auto riapre gli stessi nodi.
+
+## Azione "Artist radio" in riproduzione
+
+`MusicPlaybackServiceSession` pubblica una custom action
+`ACTION_ARTIST_RADIO` ("Artist radio", icona `ic_car_artist_radio`) subito dopo
+il cuore, così i due pulsanti esterni di Android 13+ sono "mi piace" e "radio
+dell'artista". Il servizio la gestisce in `MusicPlaybackServiceCar.kt`
+(`playCarArtistRadio`), che riusa `AndroidAutoMediaLibrary.playArtistRadio`
+(lo stesso percorso della voce **Artisti** della Libreria) e mostra un errore
+di riproduzione se la radio non produce brani. L'azione resta sempre
+selezionabile: riavvia la radio dell'artista del brano corrente.
+
+
 
 - `app/src/main/java/com/lastwave/app/playback/AndroidAutoMediaLibrary.kt` —
-  ricerca per categorie, pagine di album/playlist/radio, riproduzione e
-  navigazione dei preferiti.
+  radice a quattro schede, ricerca per categorie, pagine di album/playlist/radio,
+  Sfoglia per generi, Libreria (playlist, album salvati, artisti, podcast),
+  riproduzione e navigazione dei preferiti.
+- `app/src/main/java/com/lastwave/app/data/playlist/RecentPlaylistStore.kt` —
+  persistenza DataStore delle playlist avviate, deduplicate e limitate a 12.
+- `app/src/main/java/com/lastwave/app/playback/MusicPlayer.kt` —
+  `playQueue(..., playlistId = ...)` registra la playlist nella cronologia.
+- `app/src/main/java/com/lastwave/app/playback/MusicPlaybackService.kt` —
+  gestione della nuova azione `ACTION_ARTIST_RADIO`.
 - `app/src/main/java/com/lastwave/app/playback/MusicPlaybackServiceCar.kt` —
-  notifiche di aggiornamento dopo le azioni sui preferiti.
+  notifiche di aggiornamento dopo le azioni sui preferiti e avvio della radio
+  dell'artista dal volante.
+- `app/src/main/java/com/lastwave/app/playback/MusicPlaybackServiceSession.kt` —
+  custom action "Artist radio" accanto al cuore.
+- `app/src/main/res/drawable/ic_car_artist_radio.xml` — icona dell'azione.
 - `app/src/main/java/com/lastwave/app/data/playlist/CarMediaFavorites.kt` —
   modello e persistenza DataStore.
 - `app/src/test/java/com/lastwave/app/playback/AndroidAutoMediaLibrarySearchTest.kt` —
-  test di ordine dei risultati, salvataggio di un album e avvio radio.
+  test di ordine dei risultati, salvataggio di un album, schede della radice e
+  avvio radio.
+- `app/src/test/java/com/lastwave/app/data/playlist/RecentPlaylistStoreTest.kt` —
+  test di deduplicazione, copertina di ripiego e limite di 12 voci.
 - `app/src/test/java/com/lastwave/app/data/playlist/CarMediaFavoritesTest.kt` —
   test di persistenza, deduplicazione e rimozione.
 
@@ -49,6 +93,11 @@ espone controlli personalizzati per ciascun elemento sfogliabile.
    l'azione prevista. L'interfaccia Android Auto può variare in base all'host.
 4. Verificare che il nodo **Favorites** si aggiorni dopo salvataggio e
    rimozione, e che album e playlist salvati riaprano i brani corretti.
+5. Verificare che la radice mostri le quattro schede **Home**, **Recenti**,
+   **Sfoglia**, **Libreria** e che le voci di ogni scheda aprano il livello
+   atteso; che **Recenti** si popoli solo dopo aver avviato una playlist.
+6. Verificare che la custom action **Artist radio** compaia in riproduzione e
+   avvii una coda "‹artista› Radio" senza toccare il cuore.
 
 I test non sono stati eseguiti: su questo PC `java`/`javac`, Android Studio,
 Android SDK e `adb` non risultavano disponibili. L'installazione di Temurin JDK

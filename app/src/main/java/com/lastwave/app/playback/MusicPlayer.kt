@@ -92,6 +92,7 @@ import com.lastwave.app.data.lossless.LosslessAudioStream
 import com.lastwave.app.data.lossless.LosslessMusicApi
 import com.lastwave.app.data.network.NetworkMonitor
 import com.lastwave.app.data.playlist.PlaylistRepository
+import com.lastwave.app.data.playlist.RecentPlaylistStore
 import com.lastwave.app.data.plugin.ModuleDrmFactory
 import com.lastwave.app.data.plugin.SegmentedDashBridge
 import com.lastwave.app.data.plugin.stableCacheKey
@@ -177,6 +178,7 @@ class MusicPlayer @Inject constructor(
     internal val equalizerPreferences: EqualizerPreferences,
     private val discoverRepository: DiscoverRepository,
     private val playlistRepository: PlaylistRepository,
+    private val recentPlaylistStore: RecentPlaylistStore,
     internal val nativeAudioEngine: dagger.Lazy<NativeAudioEngine>,
     internal val audioEffectsEngine: AudioEffectsEngine,
     internal val applicationScope: CoroutineScope,
@@ -2650,7 +2652,16 @@ class MusicPlayer @Inject constructor(
         sourceLabel: String = "LastWave",
         startShuffled: Boolean = false,
         enableRadioContinuation: Boolean = false,
+        playlistId: Long? = null,
     ) {
+        // The car's "Recenti" tab lists playlists, and only the call site that
+        // owns the SavedPlaylist knows its id: record it where playback starts
+        // instead of guessing from the queue's title.
+        playlistId?.let { id ->
+            applicationScope.launch(Dispatchers.IO) {
+                runCatching { playlistRepository.getById(id)?.let { recentPlaylistStore.record(it) } }
+            }
+        }
         if (!enableRadioContinuation) disableRadioQueue()
         playQueueInternal(
             tracks = tracks,
