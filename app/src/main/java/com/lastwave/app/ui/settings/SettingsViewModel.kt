@@ -945,7 +945,33 @@ class SettingsViewModel @Inject constructor(
                 val inputStream = context.contentResolver.openInputStream(uri)
                     ?: error("Could not open selected playlist file")
 
-                val (saved, result) = inputStream.use { playlistImportManager.importCsvStream(it, displayName) }
+                // Multi-playlist CSV (e.g. Exportify "My Spotify Library"): the file
+                // has a "Playlist name" column grouping tracks into separate playlists.
+                // Try that path first; fall back to the single-playlist import when the
+                // column is absent (ordinary CSV/M3U export).
+                val multiResults = inputStream.use {
+                    playlistImportManager.importCsvStreamAsMultiple(it, displayName)
+                }
+                if (multiResults.isNotEmpty()) {
+                    val totalImported = multiResults.sumOf { it.second.matchedCount }
+                    val totalRows = multiResults.sumOf { it.second.totalRows }
+                    _uiState.update {
+                        it.copy(
+                            toastMessage = appContext.getString(
+                                com.lastwave.app.R.string.toast_import_multi_result,
+                                multiResults.size,
+                                totalImported,
+                                totalRows - totalImported,
+                            ),
+                        )
+                    }
+                    return@launch
+                }
+
+                // No playlist-name column — fall back to single-playlist import.
+                val inputStream2 = context.contentResolver.openInputStream(uri)
+                    ?: error("Could not open selected playlist file")
+                val (saved, result) = inputStream2.use { playlistImportManager.importCsvStream(it, displayName) }
                 _uiState.update {
                     it.copy(toastMessage = appContext.getString(com.lastwave.app.R.string.toast_import_result, saved.title, result.matchedCount, result.totalRows - result.matchedCount))
                 }

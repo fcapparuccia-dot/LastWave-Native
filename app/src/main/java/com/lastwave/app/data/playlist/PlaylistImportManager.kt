@@ -11,6 +11,9 @@ import kotlinx.coroutines.withContext
 import java.io.InputStream
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 @Singleton
 class PlaylistImportManager @Inject constructor(
@@ -22,7 +25,7 @@ class PlaylistImportManager @Inject constructor(
 ) {
 
     companion object {
-        /** True for the account's special Liked Music / Liked Videos playlist (LM / VLLM / LL / VLLL). */
+        /** True for the account''s special Liked Music / Liked Videos playlist (LM / VLLM / LL / VLLL). */
         fun isYtLikedId(id: String): Boolean {
             val clean = id.trim()
             return clean == "LM" || clean == "VLLM" || clean.removePrefix("VL") == "LM" ||
@@ -56,11 +59,11 @@ class PlaylistImportManager @Inject constructor(
     }
 
     /**
-     * Merges the account's YouTube Liked Music (LM) into the built-in local
+     * Merges the account''s YouTube Liked Music (LM) into the built-in local
      * Liked Songs playlist (deduped by strong song identity). Unlike normal
      * imports this never creates a separate `custom` playlist and never
      * creates a remote mapping — LM is not editable via the playlist-edit
-     * API. The local heart instead follows the account's actual liked state.
+     * API. The local heart instead follows the account''s actual liked state.
      *
      * The merge itself runs inside [LikedSongsManager.mergeYouTubeTracks] under the
      * shared liked mutation mutex, so a heart-tap racing this import can no
@@ -88,7 +91,7 @@ class PlaylistImportManager @Inject constructor(
      * Makes an owned account playlist local as a one-way copy. Unlike before,
      * this deliberately creates NO live two-way mapping and enrolls nothing
      * in background sync: importing a playlist only means "play it here", so
-     * the app must never write back to the user's YouTube playlist on its
+     * the app must never write back to the user''s YouTube playlist on its
      * own. A per-playlist sync toggle in the UI remains the single explicit
      * opt-in that creates a live mirror.
      */
@@ -103,6 +106,44 @@ class PlaylistImportManager @Inject constructor(
             }?.let { return@withContext it }
             importYouTubePlaylist(playlist)
         }
+
+    /**
+     * Imports a multi-playlist CSV export (e.g. Exportify "My Spotify Library")
+     * as separate playlists, one per distinct "Playlist name" value in the file.
+     * Returns one [SavedPlaylist] per group that yielded at least one matched
+     * track. Groups with no matches are silently skipped so a single unresolvable
+     * playlist name never aborts the whole import.
+     *
+     * Pre-condition: the file must have a recognisable playlist-name column;
+     * [CsvPlaylistImporter.parseTracksGrouped] returns null otherwise and
+     * [handleCsvPicked] falls back to the single-playlist path.
+     */
+    suspend fun importCsvStreamAsMultiple(
+        inputStream: InputStream,
+        filename: String,
+    ): List<Pair<SavedPlaylist, CsvImportResult>> = withContext(Dispatchers.IO) {
+        val grouped = csvPlaylistImporter.parseTracksGrouped(inputStream, filename)
+            ?: return@withContext emptyList()
+        if (grouped.isEmpty()) return@withContext emptyList()
+        val fileType = filename.substringAfterLast('.', "File").uppercase()
+        // Match each group concurrently — each group uses its own Semaphore(4)
+        // inside matchRawTracks, so total in-flight requests stay bounded.
+        coroutineScope {
+            grouped.entries.map { (playlistName, rows) ->
+                async {
+                    val result = csvPlaylistImporter.matchRawTracks(rows, playlistName)
+                    if (result.tracks.isEmpty()) return@async null
+                    val saved = playlistRepository.save(
+                        title = result.suggestedTitle,
+                        subtitle = "$fileType Import \u2022 ${result.matchedCount} imported, ${result.totalRows - result.matchedCount} skipped",
+                        mode = "custom",
+                        tracks = result.tracks,
+                    )
+                    Pair(saved, result)
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
 
     suspend fun importCsvStream(
         inputStream: InputStream,
@@ -155,7 +196,7 @@ class PlaylistImportManager @Inject constructor(
     }
 
     /**
-     * Imports the user's Spotify Liked Songs collection into the local
+     * Imports the user''s Spotify Liked Songs collection into the local
      * Liked Songs playlist, deduped by strong song identity.
      */
     suspend fun importSpotifyLikedIntoLikedSongs(): Pair<SavedPlaylist, ExternalImportResult> =

@@ -1108,6 +1108,7 @@
     <string name="toast_backup_empty">Backup creation failed: empty data</string>
     <string name="toast_import_matching">Matching and importing %1$s songs…</string>
     <string name="toast_import_result">Imported “%1$s”: %2$d tracks, %3$d skipped</string>
+    <string name="toast_import_multi_result">Imported %1$d playlists &#8212; %2$d tracks matched, %3$d skipped</string>
     <string name="toast_import_fail">Import failed: %1$s</string>
     <string name="toast_excl_cleared">Exclusion history cleared</string>
     <string name="set_cat_audio">Audio &amp; Playback</string>

@@ -386,4 +386,21 @@ class CsvPlaylistImporterTest {
         assertEquals(0, result.matchedCount)
         assertTrue(result.tracks.isEmpty())
     }
+
+    @Test
+    fun groupsMultiPlaylistExportByPlaylistName() = runBlocking {
+        val csv = """
+            Track name,Artist name,Album,Playlist name,Type,ISRC,Spotify - id
+            "Only Love Can Hurt Like This","Paloma Faith","Only Love","Favorite Songs","Favorite","GBARL2201949","0LCkj8JSa3pahuphDXiOwZ"
+            "Mr. Know It All","Teddy Swims","Mr. Know It All","Favorite Songs","Favorite","USWB12601324","2g5kPQh1EexoG8kGZH2nOZ"
+            "Yellow","Coldplay","Parachutes","Coldplay Music Of The Spheres","Public","GBAYE0000512","3AJwUDP919kvQ9QcozQPxg"
+        """.trimIndent()
+        val groups = importer.parseTracksGrouped(csv.byteInputStream(), "My Spotify Library.csv")
+        org.junit.Assert.assertNotNull(groups)
+        assertEquals(2, groups?.size)
+        assertEquals(2, groups?.get("Favorite Songs")?.size)
+        assertEquals(1, groups?.get("Coldplay Music Of The Spheres")?.size)
+        assertEquals("Only Love Can Hurt Like This", groups?.get("Favorite Songs")?.first()?.title)
+        assertEquals("Paloma Faith", groups?.get("Favorite Songs")?.first()?.artist)
+    }
 }

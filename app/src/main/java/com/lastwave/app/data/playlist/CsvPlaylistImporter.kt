@@ -42,6 +42,140 @@ data class CsvImportResult(
 class CsvPlaylistImporter @Inject constructor(
     private val innerTube: InnerTubeMusicApi,
 ) {
+    /**
+     * Returns the per-playlist grouping from a multi-playlist CSV export (e.g.
+     * Exportify "My Spotify Library"). The map key is the playlist name in the
+     * order it first appears; the value is the deduplicated track list for that
+     * playlist. Returns null when the file has no recognisable "Playlist name"
+     * column, so the caller can fall back to [parseAndMatchCsv].
+     */
+    suspend fun parseTracksGrouped(
+        inputStream: InputStream,
+        filename: String = "Imported Playlist",
+    ): Map<String, List<CsvRawTrack>>? = withContext(Dispatchers.IO) {
+        val text = decodeText(inputStream)
+        val lines = text.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+        if (lines.isEmpty()) return@withContext null
+        // Only CSV files; M3U and plain-text have no playlist-name column.
+        if (filename.endsWith(".m3u", true) || filename.endsWith(".m3u8", true) ||
+            lines.first().equals("#EXTM3U", true)
+        ) return@withContext null
+
+        val cleanedLines = text.lineSequence()
+            .map(String::trim)
+            .filter { line ->
+                line.isNotBlank() &&
+                    !line.startsWith('#') &&
+                    !line.startsWith("//") &&
+                    !line.startsWith("sep=", ignoreCase = true)
+            }
+            .toList()
+        if (cleanedLines.isEmpty()) return@withContext null
+        val cleanedText = cleanedLines.joinToString("\n")
+
+        val delimiter = detectDelimiter(cleanedText)
+        val records = repairCollapsedRows(parseRecords(cleanedText, delimiter), delimiter)
+            .filter { row -> row.isNotEmpty() && row.any(String::isNotBlank) }
+        val first = records.firstOrNull() ?: return@withContext null
+        val headers = first.map(::normalize)
+
+        // Playlist name column — Exportify uses "Playlist name", Soundiiz may use
+        // "playlist" or "playlist name". Accept any recognisable variant.
+        val playlistNameIndex = headers.indexOfFirst { it in PLAYLIST_NAME_HEADERS }
+        if (playlistNameIndex < 0) return@withContext null
+
+        val titleIndex = headers.indexOfFirst { it in PRIMARY_TITLE_HEADERS }.takeIf { it >= 0 }
+            ?: headers.indexOfFirst { it in SECONDARY_TITLE_HEADERS }.takeIf { it >= 0 }
+            ?: -1
+        val artistIndex = headers.indexOfFirst { it in PRIMARY_ARTIST_HEADERS }.takeIf { it >= 0 }
+            ?: headers.indexOfFirst { it in SECONDARY_ARTIST_HEADERS }.takeIf { it >= 0 }
+            ?: -1
+        val albumIndex = headers.indexOfFirst { it in ALBUM_HEADERS }
+        val urlIndex = headers.indexOfFirst { it in URL_HEADERS }
+
+        val dataRows = records.drop(1)
+
+        // Build ordered map: playlist name → deduplicated track list.
+        val grouped = LinkedHashMap<String, MutableList<CsvRawTrack>>()
+        val seenPerPlaylist = HashMap<String, MutableSet<String>>()
+
+        for (row in dataRows) {
+            if (row.map(::normalize) == headers) continue
+            val playlistName = row.getOrNull(playlistNameIndex)?.trim()
+                ?.takeIf(String::isNotBlank) ?: "Imported Playlist"
+
+            val titleCell = if (titleIndex >= 0) row.getOrNull(titleIndex).orEmpty().trim() else ""
+            val rawArtist = if (artistIndex >= 0) row.getOrNull(artistIndex).orEmpty().trim() else ""
+            val rawVideoId = if (urlIndex >= 0) row.getOrNull(urlIndex)?.trim()?.let(::youtubeId) else null
+            val videoId = rawVideoId ?: row.firstNotNullOfOrNull { cell ->
+                val trimmed = cell.trim()
+                if (trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true)) youtubeId(trimmed)
+                else null
+            }
+            val titleForRow = titleCell.takeUnless { videoId != null && youtubeId(it.trim()) == videoId }
+            if (titleForRow.isNullOrBlank() && videoId == null) continue
+
+            var finalTitle = titleForRow.orEmpty()
+            var finalArtist = rawArtist
+            if (finalArtist.isBlank() && finalTitle.isNotBlank() && videoId == null) {
+                val parsed = parseTextTrack(finalTitle)
+                if (parsed.title.isNotBlank() && parsed.artist.isNotBlank()) {
+                    finalTitle = parsed.title
+                    finalArtist = parsed.artist
+                }
+            }
+
+            val track = CsvRawTrack(
+                finalTitle,
+                finalArtist,
+                row.getOrNull(albumIndex)?.trim()?.takeIf(String::isNotBlank),
+                videoId,
+            )
+            val identity = rowIdentity(track)
+            val seen = seenPerPlaylist.getOrPut(playlistName) { mutableSetOf() }
+            if (seen.add(identity)) {
+                grouped.getOrPut(playlistName) { mutableListOf() }.add(track)
+            }
+        }
+        grouped.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Matches a pre-parsed track list to playable YouTube Music tracks.
+     * Used by [PlaylistImportManager.importCsvStreamAsMultiple] to run one
+     * match pass per playlist group without re-parsing the file each time.
+     */
+    suspend fun matchRawTracks(
+        rows: List<CsvRawTrack>,
+        suggestedTitle: String,
+    ): CsvImportResult = withContext(Dispatchers.IO) {
+        val unique = rows.distinctBy(::rowIdentity)
+        val limiter = Semaphore(SEARCH_CONCURRENCY)
+        val matched = coroutineScope {
+            unique.map { raw ->
+                async {
+                    limiter.withPermit {
+                        try {
+                            matchRow(raw)
+                        } catch (cancellation: CancellationException) {
+                            throw cancellation
+                        } catch (error: Exception) {
+                            android.util.Log.w(TAG, "match failed for \"${raw.title}\"", error)
+                            null
+                        }
+                    }
+                }
+            }.awaitAll()
+        }.filterNotNull().dedupeByVideoId()
+
+        CsvImportResult(
+            suggestedTitle = suggestedTitle,
+            totalRows = unique.size,
+            matchedCount = matched.size,
+            tracks = matched,
+        )
+    }
+
     suspend fun parseAndMatchCsv(
         inputStream: InputStream,
         filename: String = "Imported Playlist",
@@ -712,6 +846,10 @@ class CsvPlaylistImporter @Inject constructor(
             "url", "uri", "track url", "track uri", "youtube url", "video id", "videoid",
             "link", "track link", "spotify uri", "spotify url", "youtube link", "video url",
             "spotify id", "spotify track id", "id", "yt url", "youtube", "soundcloud url",
+        )
+
+        val PLAYLIST_NAME_HEADERS = setOf(
+            "playlist name", "playlist", "playlist title", "list name", "playlist_name",
         )
     }
 }
