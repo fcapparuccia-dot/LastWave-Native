@@ -832,12 +832,49 @@ class InnerTubeMusicApi @Inject constructor(
         }
     }
 
+    /** Albums and singles of the explore page's "Nuove uscite" (`MPRE…` pages);
+     *  its playlist carousel is not an album and stays out of the Home shelf. */
     suspend fun fetchNewReleases(): List<YouTubePlaylistSummary> = withContext(Dispatchers.IO) {
         runCatching {
             val root = browseRoot(YT_NEW_RELEASES_BROWSE_ID, authenticated = ytAuth.connection.value.isConnected)
-            parsePlaylistRenderers(root)
+            parseNewReleaseCards(root).filterNot { it.isPlaylist }.map { it.toPlaylistSummary() }
         }.getOrDefault(emptyList())
     }
+
+    /**
+     * The car's "Nuove uscite" shelves. The albums grid mixes albums and
+     * singles — YouTube Music has no singles page — so
+     * [NewReleasesCollections.splitCards] splits it on the localized label,
+     * while the release playlists come from the explore page's playlist grid.
+     * Two fixed browse calls and no continuation: the car shows the freshest
+     * [limit] of each shelf, and paging three tokens is not worth a cache.
+     */
+    suspend fun fetchNewReleasesCollections(limit: Int = 40): NewReleasesCollections = withContext(Dispatchers.IO) {
+        val isAuth = ytAuth.connection.value.isConnected
+        val releases = async {
+            runCatching { parseNewReleaseCards(browseRoot(NEW_RELEASES_ALBUMS_BROWSE_ID, authenticated = isAuth)) }
+                .getOrDefault(emptyList())
+                .filterNot { it.isPlaylist }
+        }
+        val playlists = async {
+            runCatching { parseNewReleaseCards(browseRoot(YT_NEW_RELEASES_BROWSE_ID, authenticated = isAuth)) }
+                .getOrDefault(emptyList())
+                .filter { it.isPlaylist }
+        }
+        val (albums, singles) = NewReleasesCollections.splitCards(releases.await(), limit)
+        NewReleasesCollections(
+            albums = albums,
+            singles = singles,
+            playlists = playlists.await().take(limit),
+        )
+    }
+
+    private fun NewReleaseCard.toPlaylistSummary() = YouTubePlaylistSummary(
+        id = browseId,
+        title = title,
+        author = subtitle,
+        artworkUrl = artworkUrl,
+    )
 
     data class NewReleasesBrowseBatch(
         val directTracks: List<YouTubeMusicTrack>,
@@ -853,24 +890,24 @@ class InnerTubeMusicApi @Inject constructor(
             browseRoot(YT_NEW_RELEASES_BROWSE_ID, authenticated = isAuth)
         }
         val directTracks = (parseSongRenderers(root) + parseHomeFeedSongs(root)).distinctBy { it.videoId }
-        val albums = parsePlaylistRenderers(root)
+        val albums = parseNewReleaseCards(root).filterNot { it.isPlaylist }.map { it.toPlaylistSummary() }
         val nextToken = genericContinuationToken(root)
         NewReleasesBrowseBatch(directTracks, albums, nextToken)
     }
-
 
     suspend fun fetchNewReleasesAlbumsGrid(continuationToken: String? = null): Pair<List<YouTubePlaylistSummary>, String?> = withContext(Dispatchers.IO) {
         val isAuth = ytAuth.connection.value.isConnected
         val root = if (!continuationToken.isNullOrBlank()) {
             browseContinuation(continuationToken, authenticated = isAuth)
         } else {
-            browseRoot("FEmusic_new_releases_albums", authenticated = isAuth)
+            browseRoot(NEW_RELEASES_ALBUMS_BROWSE_ID, authenticated = isAuth)
         }
-        val albums = parsePlaylistRenderers(root)
+        // This grid carries albums and singles as `musicTwoRowItemRenderer`s;
+        // the playlist parser dropped them, so paging it yielded nothing.
+        val albums = parseNewReleaseCards(root).filterNot { it.isPlaylist }.map { it.toPlaylistSummary() }
         val nextToken = genericContinuationToken(root)
         albums to nextToken
     }
-
 
     /** [countryCode] is the chart country (ISO 3166-1 alpha-2, `ZZ` = worldwide).
      *  Null keeps the chart on the visitor's own country, which is what the app
@@ -3030,6 +3067,8 @@ class InnerTubeMusicApi @Inject constructor(
         const val YT_LIKED_BROWSE_ID = "VLLM"
         const val YT_HOME_BROWSE_ID = "FEmusic_home"
         const val YT_NEW_RELEASES_BROWSE_ID = "FEmusic_new_releases"
+        /** Albums *and* singles in one grid — YouTube Music has no singles page. */
+        const val NEW_RELEASES_ALBUMS_BROWSE_ID = "FEmusic_new_releases_albums"
         const val YT_CHARTS_BROWSE_ID = "FEmusic_charts"
         const val MAX_CONTINUATION_PAGES = 600
         const val WRITE_ACTIONS_PER_REQUEST = 50

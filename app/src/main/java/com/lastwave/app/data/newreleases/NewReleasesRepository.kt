@@ -98,28 +98,6 @@ class NewReleasesRepository @Inject constructor(
         nextBatch()
     }
 
-    /**
-     * Stateless preview for the car's "Nuove uscite" node: the same albums as
-     * the Home shelf, flattened to tracks. It never touches the paging queue,
-     * so opening it in a car leaves the phone screen's position alone.
-     */
-    suspend fun fetchPreview(trackLimit: Int = 24, albumLimit: Int = 4): List<YouTubeMusicTrack> {
-        val albums = feedRepository.getCachedFeed()?.newReleases.orEmpty()
-            .ifEmpty { runCatching { innerTube.fetchNewReleases() }.getOrDefault(emptyList()) }
-            .filter { it.id.isNotBlank() }
-            .distinctBy { it.id }
-            .take(albumLimit)
-        val tracks = mutableListOf<YouTubeMusicTrack>()
-        for (album in albums) {
-            val page = runCatching {
-                innerTube.fetchAlbumPage(album.id, album.title, album.author.orEmpty())
-            }.getOrNull() ?: continue
-            tracks += page.tracks.mapNotNull { it.toYouTubeMusicTrack() }
-            if (tracks.size >= trackLimit) break
-        }
-        return tracks.distinctBy { it.videoId }.take(trackLimit)
-    }
-
     private suspend fun nextBatch(): List<YouTubeMusicTrack> {
         val collected = mutableListOf<YouTubeMusicTrack>()
         val minBatchSize = 10

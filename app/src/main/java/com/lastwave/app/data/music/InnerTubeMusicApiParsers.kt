@@ -941,6 +941,45 @@ internal fun InnerTubeMusicApi.parsePlaylistRenderers(root: JsonElement): List<Y
         }.distinctBy { it.id }
     }
 
+/**
+ * Cards of the "Nuove uscite" shelves and grids. They are all
+ * `musicTwoRowItemRenderer`s, and the same shelves also carry artists, videos
+ * and podcasts — only album/single pages (`MUSIC_PAGE_TYPE_ALBUM`) and
+ * playlists (`MUSIC_PAGE_TYPE_PLAYLIST`) can be opened from here, so
+ * everything else is dropped instead of surfacing a row that leads nowhere.
+ */
+internal fun InnerTubeMusicApi.parseNewReleaseCards(root: JsonElement): List<NewReleaseCard> {
+        val renderers = mutableListOf<JsonObject>()
+        collectObjects(root, "musicTwoRowItemRenderer", renderers)
+        return renderers.mapNotNull { renderer ->
+            val titleRuns = renderer.obj("title")?.array("runs") ?: return@mapNotNull null
+            val endpoint = titleRuns.firstOrNull()?.asObject()
+                ?.obj("navigationEndpoint")?.obj("browseEndpoint") ?: return@mapNotNull null
+            val browseId = endpoint.string("browseId")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val pageType = endpoint.obj("browseEndpointContextSupportedConfigs")
+                ?.obj("browseEndpointContextMusicConfig")?.string("pageType")
+            // Both albums and singles answer MUSIC_PAGE_TYPE_ALBUM.
+            val isPlaylist = pageType == "MUSIC_PAGE_TYPE_PLAYLIST"
+            if (!isPlaylist && pageType != "MUSIC_PAGE_TYPE_ALBUM") return@mapNotNull null
+            val title = titleRuns.joinToString("") { it.asObject()?.string("text").orEmpty() }.trim()
+            if (title.isEmpty()) return@mapNotNull null
+            // Album/single subtitles read "Album • Artist"; a playlist subtitle
+            // is just the artist list, and the ", " runs keep their own space.
+            val runs = renderer.obj("subtitle")?.array("runs").orEmpty()
+                .mapNotNull { it.asObject()?.string("text") }
+                .filter { it.isNotBlank() && it.trim() != "•" }
+            NewReleaseCard(
+                browseId = browseId,
+                title = title,
+                subtitle = (if (isPlaylist) runs.joinToString("") else runs.drop(1).joinToString(""))
+                    .trim().ifBlank { null },
+                artworkUrl = extractThumbnailsUrl(renderer),
+                label = if (isPlaylist) null else runs.firstOrNull()?.trim(),
+                isPlaylist = isPlaylist,
+            )
+        }.distinctBy { it.browseId }
+    }
+
 internal fun InnerTubeMusicApi.extractThumbnailsUrl(renderer: JsonElement): String? {
         val foundArrays = mutableListOf<JsonArray>()
         fun findThumbnails(el: JsonElement) {

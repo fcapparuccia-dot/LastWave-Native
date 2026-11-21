@@ -37,13 +37,25 @@ utente Spotify ritrova in auto:
 | **Sfoglia** | gruppi di generi/mood di YouTube Music → generi → playlist del genere → brani |
 | **Libreria** | Playlist salvate, Album salvati, Artisti (dalla cronologia di ascolto), Podcast e show |
 
-**Nuove uscite** riusa la stessa shelf della Home del telefono: gli album di
-`getCachedFeed().newReleases` (o `InnerTubeMusicApi.fetchNewReleases()` quando
-la cache è vuota) vengono appiattiti nei loro brani da
-`NewReleasesRepository.fetchPreview()`, senza toccare la coda di paging usata
-dalla schermata del telefono. La lista è limitata a 24 brani da 4 album, con un
-budget di rete di 10 secondi e cache per sessione auto di 30 minuti; se la rete
-non risponde, il nodo resta vuoto invece di bloccare l'apertura.
+**Nuove uscite** è un nodo con tre sottomenu, non una lista piatta di brani:
+
+| Voce | Contenuto |
+|---|---|
+| **Singoli** | uscite singole della griglia `FEmusic_new_releases_albums` |
+| **Album** | album completi della stessa griglia |
+| **Playlist** | playlist promozionali della pagina nuove uscite |
+
+YouTube Music non ha una pagina dedicata ai singoli: la griglia nuove uscite
+mescola album e singoli e li marca tutti con lo stesso
+`MUSIC_PAGE_TYPE_ALBUM`, quindi la divisione usa l'etichetta localizzata del
+sottotitolo ("Album", "Singolo", "Single", "アルバム"…) e, quando nessuna riga la
+espone, l'etichetta maggioritaria della griglia (gli album aprono la lista e sono
+i più numerosi). `InnerTubeMusicApi.fetchNewReleasesCollections(24)` scarica in
+parallelo la griglia album e la pagina playlist; il risultato resta in cache per
+la sessione auto (30 minuti) e ogni voce apre i suoi brani con
+`fetchAlbumPage`. Se la rete non risponde entro 10 secondi il nodo resta vuoto
+invece di bloccare l'apertura. Il comando vocale "riproduci Nuove uscite" accoda
+fino a 4 uscite della griglia, singoli prima degli album.
 
 La cronologia delle playlist non è deducibile da `SongPlayStatsRepository`, che
 conosce solo i brani: `RecentPlaylistStore` la registra nel momento in cui una

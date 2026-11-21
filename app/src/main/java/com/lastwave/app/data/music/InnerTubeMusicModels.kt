@@ -172,6 +172,58 @@ data class YouTubePlaylistSummary(
     val artworkUrl: String? = null,
 )
 
+/**
+ * One card of YouTube Music's "Nuove uscite" pages. [browseId] is an `MPRE…`
+ * album/single page or a playlist (`VLRD…` for mixes and editorial lists).
+ */
+@androidx.compose.runtime.Immutable
+data class NewReleaseCard(
+    val browseId: String,
+    val title: String,
+    val subtitle: String? = null,
+    val artworkUrl: String? = null,
+    /** Localized release label from the card subtitle: "Album", "Singolo",
+     *  "アルバム"… Null for playlists, whose subtitle starts with the artists. */
+    val label: String? = null,
+    val isPlaylist: Boolean = false,
+)
+
+/** The three shelves of the car's "Nuove uscite" node. */
+data class NewReleasesCollections(
+    val albums: List<NewReleaseCard> = emptyList(),
+    val singles: List<NewReleaseCard> = emptyList(),
+    val playlists: List<NewReleaseCard> = emptyList(),
+) {
+    val isEmpty: Boolean
+        get() = albums.isEmpty() && singles.isEmpty() && playlists.isEmpty()
+
+    val all: List<NewReleaseCard>
+        get() = singles + albums + playlists
+
+    companion object {
+        /**
+         * YouTube Music has no singles page: `FEmusic_new_releases_albums`
+         * carries albums and singles in one grid and marks both as
+         * `MUSIC_PAGE_TYPE_ALBUM` — only the localized subtitle label ("Album",
+         * "Singolo", "アルバム"…) differs. Albums are therefore the cards whose
+         * label reads "album" in the user's language; when none does (CJK,
+         * Cyrillic…), the majority label is the album one, because the grid
+         * lists albums first and in greater number. Everything else — singles,
+         * EPs — belongs with the singles, exactly how YouTube Music groups the
+         * shelf itself ("Album e singoli").
+         */
+        fun splitCards(
+            cards: List<NewReleaseCard>,
+            limit: Int,
+        ): Pair<List<NewReleaseCard>, List<NewReleaseCard>> {
+            val albumLabel = cards.firstOrNull { it.label?.contains("album", ignoreCase = true) == true }?.label
+                ?: cards.groupingBy { it.label }.eachCount().maxByOrNull { it.value }?.key
+            val (albums, singles) = cards.partition { it.label == albumLabel }
+            return albums.take(limit) to singles.take(limit)
+        }
+    }
+}
+
 data class YtAccountInfo(
     val accountName: String,
     val channelHandle: String? = null,

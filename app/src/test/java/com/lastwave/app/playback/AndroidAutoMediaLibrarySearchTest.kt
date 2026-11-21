@@ -8,11 +8,13 @@ import com.lastwave.app.data.generate.GeneratedTrack
 import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
+import com.lastwave.app.data.model.AlbumPageData
 import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodsRepository
+import com.lastwave.app.data.music.NewReleaseCard
+import com.lastwave.app.data.music.NewReleasesCollections
 import com.lastwave.app.data.music.YouTubePlaylistResult
 import com.lastwave.app.data.music.YouTubeMusicTrack
-import com.lastwave.app.data.newreleases.NewReleasesRepository
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
 import com.lastwave.app.data.playlist.RecentPlaylistStore
@@ -64,7 +66,6 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
-            newReleasesRepository = mockk(relaxed = true),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
@@ -168,28 +169,43 @@ class AndroidAutoMediaLibrarySearchTest {
     }
 
     @Test
-    fun homeListsNewReleasesBelowChartsAndPlaysThem() = runBlocking {
-        val newReleasesRepository = mockk<NewReleasesRepository>()
+    fun newReleasesOpenOnSinglesAlbumsAndPlaylistsAndPlayTheChosenRelease() = runBlocking {
+        val innerTube = mockk<InnerTubeMusicApi>(relaxed = true)
+        coEvery { innerTube.fetchNewReleasesCollections(any()) } returns NewReleasesCollections(
+            albums = listOf(
+                NewReleaseCard(browseId = "MPREb_album", title = "Full album", subtitle = "Alpha", label = "Album"),
+            ),
+            singles = listOf(
+                NewReleaseCard(browseId = "MPREb_single", title = "Fresh single", subtitle = "Beta", label = "Singolo"),
+            ),
+            playlists = listOf(
+                NewReleaseCard(browseId = "VLPLrelease", title = "Release playlist", subtitle = "Various", isPlaylist = true),
+            ),
+        )
+        coEvery { innerTube.fetchAlbumPage("MPREb_single", "Fresh single", "Beta") } returns AlbumPageData(
+            title = "Fresh single",
+            artist = "Beta",
+            browseId = "MPREb_single",
+            tracks = listOf(
+                PlayableTrack(title = "Single cut", artist = "Beta", videoId = "s1"),
+                PlayableTrack(title = "Single b-side", artist = "Beta", videoId = "s2"),
+            ),
+        )
         val library = AndroidAutoMediaLibrary(
             context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
             playlistRepository = mockk(relaxed = true),
             ytMusicLibraryManager = mockk(relaxed = true),
             downloadedTrackDao = mockk(relaxed = true),
             searchRepository = mockk(relaxed = true),
-            innerTube = mockk(relaxed = true),
+            innerTube = innerTube,
             carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
             artistRepository = mockk(relaxed = true),
             statsRepository = mockk(relaxed = true),
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
-            newReleasesRepository = newReleasesRepository,
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
-        )
-        coEvery { newReleasesRepository.fetchPreview(any(), any()) } returns listOf(
-            YouTubeMusicTrack(videoId = "new1", title = "Fresh single", artist = "New artist"),
-            YouTubeMusicTrack(videoId = "new2", title = "Fresh album cut", artist = "New artist"),
         )
 
         val homeTitles = library.loadChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
@@ -197,12 +213,18 @@ class AndroidAutoMediaLibrarySearchTest {
         val chartsIndex = homeTitles.indexOf("Popolari ora")
         assertEquals("Nuove uscite", homeTitles[chartsIndex + 1])
 
-        val tracks = library.loadChildren(AndroidAutoMediaLibrary.NEW_RELEASES_ID, MusicPlayerState())
-        assertEquals(listOf("Fresh single", "Fresh album cut"), tracks.map { it.description.title.toString() })
+        val menu = library.loadChildren(AndroidAutoMediaLibrary.NEW_RELEASES_ID, MusicPlayerState())
+        assertEquals(listOf("Singoli", "Album", "Playlist"), menu.map { it.description.title.toString() })
+
+        val singles = library.loadChildren(menu[0].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Fresh single"), singles.map { it.description.title.toString() })
+
+        val tracks = library.loadChildren(singles[0].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Single cut", "Single b-side"), tracks.map { it.description.title.toString() })
 
         val player = mockk<MusicPlayer>(relaxed = true)
         assertTrue(library.playMediaId(tracks[1].description.mediaId!!, player))
-        verify { player.playQueue(any(), startIndex = 1, sourceLabel = "New releases") }
+        verify { player.playQueue(any(), startIndex = 1, sourceLabel = "Fresh single") }
     }
 
     @Test
@@ -228,7 +250,6 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
-            newReleasesRepository = mockk(relaxed = true),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )

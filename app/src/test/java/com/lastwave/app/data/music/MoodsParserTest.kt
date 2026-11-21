@@ -1,7 +1,6 @@
 package com.lastwave.app.data.music
 
 import com.google.common.truth.Truth.assertThat
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.serialization.json.Json
 import org.junit.Test
@@ -104,19 +103,15 @@ class MoodsParserTest {
 
     @Test
     fun categoryOnlyExposesPlaylistShelvesToTheCategoryScreen() {
-        val root = Json.parseToJsonElement(CATEGORY_FIXTURE)
-        val playlistShelf = parserApi().parseHomeShelves(root).first()
-        val track = HomeShelfItem.Track(YouTubeMusicTrack(videoId = "video", title = "Song", artist = "Artist"))
-        val api = mockk<InnerTubeMusicApi>()
-        every { api.parseHomeShelves(root) } returns listOf(
-            HomeShelf(title = "Songs", items = listOf(track)),
-            playlistShelf.copy(items = listOf(track) + playlistShelf.items),
-            HomeShelf(title = "Empty"),
-        )
+        // Category pages also carry song carousels and shelves that mix songs with playlists:
+        // the screen opens playlists only, so a song never reaches a card.
+        val category = parseMoodCategory(Json.parseToJsonElement(CATEGORY_WITH_SONGS_FIXTURE), parserApi())
 
-        val category = parseMoodCategory(root, api)
-
-        assertThat(category.shelves).containsExactly(playlistShelf)
+        assertThat(category.shelves.map { it.title })
+            .containsExactly("Romantic Bollywood & Indian", "Sweethearts & romance").inOrder()
+        val playlists = category.shelves.flatMap { it.items }.map { it as HomeShelfItem.Playlist }
+        assertThat(playlists.map { it.playlist.title })
+            .containsExactly("Bollywood Romantic Moments", "Sweetheart Pop").inOrder()
     }
 
     private fun parserApi() = InnerTubeMusicApi(
@@ -193,6 +188,55 @@ class MoodsParserTest {
                         "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_PLAYLIST"}}
                       }}
                     }}]
+                  }},
+                  {"musicCarouselShelfRenderer":{
+                    "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Sweethearts & romance"}]}}},
+                    "contents":[{"musicTwoRowItemRenderer":{
+                      "aspectRatio":"MUSIC_TWO_ROW_ITEM_THUMBNAIL_ASPECT_RATIO_SQUARE",
+                      "title":{"runs":[{"text":"Sweetheart Pop"}]},
+                      "subtitle":{"runs":[{"text":"Playlist"},{"text":" \u2022 "},{"text":"YouTube Music"}]},
+                      "navigationEndpoint":{"browseEndpoint":{
+                        "browseId":"VLRDCLAK5uy_l1oO11DBO4FD8U7bOrqUKK5Y_PkISUMQM",
+                        "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_PLAYLIST"}}
+                      }}
+                    }}]
+                  }}
+                ]}
+              }}}]}}}
+        """.trimIndent()
+
+        // Same Romance page plus a song carousel and a song inside the first playlist shelf.
+        val CATEGORY_WITH_SONGS_FIXTURE = """
+            {
+              "header":{"musicHeaderRenderer":{"title":{"runs":[{"text":"Romance"}]}}},
+              "contents":{"singleColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{"content":{
+                "sectionListRenderer":{"contents":[
+                  {"musicCarouselShelfRenderer":{
+                    "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Romance songs"}]}}},
+                    "contents":[{"musicTwoRowItemRenderer":{
+                      "title":{"runs":[{"text":"Love Song"}]},
+                      "subtitle":{"runs":[{"text":"Artist X"}]},
+                      "navigationEndpoint":{"watchEndpoint":{"videoId":"vid_song"}}
+                    }}]
+                  }},
+                  {"musicCarouselShelfRenderer":{
+                    "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Romantic Bollywood & Indian"}]}}},
+                    "contents":[
+                      {"musicTwoRowItemRenderer":{
+                        "title":{"runs":[{"text":"Love Song"}]},
+                        "subtitle":{"runs":[{"text":"Artist X"}]},
+                        "navigationEndpoint":{"watchEndpoint":{"videoId":"vid_song"}}
+                      }},
+                      {"musicTwoRowItemRenderer":{
+                        "aspectRatio":"MUSIC_TWO_ROW_ITEM_THUMBNAIL_ASPECT_RATIO_SQUARE",
+                        "title":{"runs":[{"text":"Bollywood Romantic Moments"}]},
+                        "subtitle":{"runs":[{"text":"Playlist"},{"text":" \u2022 "},{"text":"YouTube Music"}]},
+                        "navigationEndpoint":{"browseEndpoint":{
+                          "browseId":"VLRDCLAK5uy_miAacfMxVybbt7ketqqnPPbH9LDn1TavU",
+                          "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_PLAYLIST"}}
+                        }}
+                      }}
+                    ]
                   }},
                   {"musicCarouselShelfRenderer":{
                     "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Sweethearts & romance"}]}}},

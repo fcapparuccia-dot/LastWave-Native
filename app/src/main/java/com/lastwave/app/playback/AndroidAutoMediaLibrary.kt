@@ -16,9 +16,9 @@ import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodGroup
 import com.lastwave.app.data.music.MoodTile
 import com.lastwave.app.data.music.MoodsRepository
+import com.lastwave.app.data.music.NewReleasesCollections
 import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.music.YouTubePlaylistSummary
-import com.lastwave.app.data.newreleases.NewReleasesRepository
 import com.lastwave.app.data.podcast.PodcastRepository
 import com.lastwave.app.data.podcast.toPlayableTrack
 import com.lastwave.app.data.playlist.CarMediaFavorite
@@ -66,7 +66,6 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val moodsRepository: MoodsRepository,
     private val podcastRepository: PodcastRepository,
     private val recentPlaylistStore: RecentPlaylistStore,
-    private val newReleasesRepository: NewReleasesRepository,
     private val settingsPreferences: SettingsPreferences,
     // Lazy: the chart node is the only consumer, and building the whole
     // recommendation pipeline for a widget tap or a browse root would cost
@@ -101,9 +100,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
     // Charts are the one node that works on a fresh install: no playlist, no
     // download, no history. Cached so reopening the node in a car is instant.
     @Volatile private var chartCache: ChartCache? = null
-    // New releases: same shelf as the phone's Home tab, so the car shows what
-    // the user already sees in the app instead of a separate selection.
-    @Volatile private var newReleaseTracks: List<PlayableTrack> = emptyList()
+    // New releases: YouTube Music's own shelves (singles, albums and release
+    // playlists), cached per car session so the three sub-menus open instantly.
+    @Volatile private var newReleaseShelf: NewReleasesCollections? = null
     @Volatile private var newReleasesFetchedAtMillis = 0L
     // Moods/genres: the browse tab resolves the same page on every ignition,
     // so both the tile list and each opened genre page are kept for a while.
@@ -169,9 +168,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 selectChartCountry(country)
                 chartTrackItems(charts(country), country)
             }
-            parentId == NEW_RELEASES_ID -> newReleases().mapIndexed { index, track ->
-                playableItem("$NEW_RELEASE_PREFIX$index", track)
-            }
+            parentId == NEW_RELEASES_ID -> newReleaseMenu()
+            parentId.startsWith(NEW_RELEASE_GROUP_PREFIX) -> newReleaseGroupItems(parentId)
+            parentId.startsWith(NEW_RELEASE_ALBUM_PREFIX) -> newReleaseChildren(parentId, isPlaylist = false)
+            parentId.startsWith(NEW_RELEASE_PLAYLIST_PREFIX) -> newReleaseChildren(parentId, isPlaylist = true)
             parentId == PLAYLISTS_ID -> getMergedPlaylists().filter { it.hasPlayableTracks() }.map { playlist ->
                 val trackCount = playlist.remoteTrackCount ?: playlist.tracks.size
                 // Browsable-only on purpose (issue #58): flagging playlists
@@ -330,13 +330,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
             mediaId.removePrefix(CHART_COUNTRY_PREFIX),
             player,
         )
-        mediaId == NEW_RELEASES_ID -> playQueueFrom(newReleases(), 0, "New releases", player)
-        mediaId.startsWith(NEW_RELEASE_PREFIX) -> playQueueFrom(
-            newReleases(),
-            mediaId.removePrefix(NEW_RELEASE_PREFIX).toIntOrNull() ?: -1,
-            "New releases",
-            player,
-        )
+        mediaId == NEW_RELEASES_ID -> playQueueFrom(newReleaseTracks(), 0, "Nuove uscite", player)
+        mediaId.startsWith(NEW_RELEASE_TRACK_PREFIX) -> playNewReleaseTrack(mediaId, player)
         mediaId.startsWith(RECENT_PREFIX) -> playQueueFrom(
             recentlyPlayedTracks(),
             mediaId.removePrefix(RECENT_PREFIX).toIntOrNull() ?: -1,
@@ -833,7 +828,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             browsableItem(
                 mediaId = NEW_RELEASES_ID,
                 title = "Nuove uscite",
-                subtitle = "Le novità su YouTube Music",
+                subtitle = "Singoli, album e playlist",
             ),
         )
         val recent = runCatching { recentlyPlayedTracks() }.getOrDefault(emptyList())
@@ -1206,20 +1201,108 @@ class AndroidAutoMediaLibrary @Inject constructor(
         return playQueueFrom(charts(country), 0, "Popular now", player)
     }
 
-    /** Same shelf as the phone's "Nuove uscite", cached per car session. */
-    private suspend fun newReleases(): List<PlayableTrack> {
-        val cached = newReleaseTracks
-        if (cached.isNotEmpty() && System.currentTimeMillis() - newReleasesFetchedAtMillis < CHART_CACHE_MS) {
+    /** The car's "Nuove uscite" shelves, cached for the session like the charts. */
+    private suspend fun newReleases(): NewReleasesCollections {
+        val cached = newReleaseShelf
+        if (cached != null && System.currentTimeMillis() - newReleasesFetchedAtMillis < CHART_CACHE_MS) {
             return cached
         }
         val fresh = bounded(NEW_RELEASES_NETWORK_BUDGET_MS) {
-            newReleasesRepository.fetchPreview(trackLimit = NEW_RELEASES_LIMIT)
-                .map { it.toPlayableTrack(null, null) }
-        }.orEmpty()
-        if (fresh.isEmpty()) return cached
-        newReleaseTracks = fresh
+            innerTube.fetchNewReleasesCollections(limit = NEW_RELEASES_LIMIT)
+        }
+        if (fresh == null || fresh.isEmpty) return cached ?: NewReleasesCollections()
+        newReleaseShelf = fresh
         newReleasesFetchedAtMillis = System.currentTimeMillis()
         return fresh
+    }
+
+    /** "Nuove uscite" opens on three shelves. YouTube Music has no singles page
+     *  (the albums grid carries both) and no release-playlists page, so this is
+     *  the only split that matches what its own "Nuove uscite" page shows. */
+    private suspend fun newReleaseMenu(): List<MediaBrowserCompat.MediaItem> {
+        val shelf = newReleases()
+        return listOfNotNull(
+            newReleaseGroupItem(NEW_RELEASE_SINGLES_GROUP, "Singoli", shelf.singles.size),
+            newReleaseGroupItem(NEW_RELEASE_ALBUMS_GROUP, "Album", shelf.albums.size),
+            newReleaseGroupItem(NEW_RELEASE_PLAYLISTS_GROUP, "Playlist", shelf.playlists.size),
+        )
+    }
+
+    private fun newReleaseGroupItem(
+        group: String,
+        title: String,
+        count: Int,
+    ): MediaBrowserCompat.MediaItem? {
+        if (count == 0) return null
+        val subtitle = if (count == 1) "1 uscita" else "$count uscite"
+        return browsableItem("$NEW_RELEASE_GROUP_PREFIX$group", title, subtitle)
+    }
+
+    private suspend fun newReleaseGroupItems(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val shelf = newReleases()
+        val cards = when (parentId.removePrefix(NEW_RELEASE_GROUP_PREFIX)) {
+            NEW_RELEASE_SINGLES_GROUP -> shelf.singles
+            NEW_RELEASE_ALBUMS_GROUP -> shelf.albums
+            else -> shelf.playlists
+        }
+        return cards.map { card ->
+            browsableItem(
+                mediaId = if (card.isPlaylist) "$NEW_RELEASE_PLAYLIST_PREFIX${card.browseId}"
+                else "$NEW_RELEASE_ALBUM_PREFIX${card.browseId}",
+                title = card.title,
+                subtitle = card.subtitle ?: if (card.isPlaylist) "Playlist" else "Album",
+                iconUri = card.artworkUrl,
+            )
+        }
+    }
+
+    /** Tracks of one release. The rows carry the queue token, so a tap plays
+     *  the release from that row with the release's own name as source label. */
+    private suspend fun newReleaseChildren(
+        parentId: String,
+        isPlaylist: Boolean,
+    ): List<MediaBrowserCompat.MediaItem> {
+        val prefix = if (isPlaylist) NEW_RELEASE_PLAYLIST_PREFIX else NEW_RELEASE_ALBUM_PREFIX
+        val browseId = parentId.removePrefix(prefix).takeIf(String::isNotBlank) ?: return emptyList()
+        val card = newReleases().all.firstOrNull { it.browseId == browseId }
+        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+            if (isPlaylist) {
+                innerTube.fetchPlaylist(browseId, maxTracks = MAX_SEARCH_RESULTS)?.tracks
+                    .orEmpty()
+                    .map { it.toPlayableTrack(card?.subtitle, card?.title) }
+            } else {
+                innerTube.fetchAlbumPage(browseId, card?.title.orEmpty(), card?.subtitle.orEmpty())
+                    ?.tracks.orEmpty()
+            }
+        }.orEmpty()
+        if (tracks.isEmpty()) return emptyList()
+        val token = cacheTracks(tracks)
+        val label = encodeEntityId(card?.title ?: tracks.first().album?.takeIf(String::isNotBlank) ?: "Nuove uscite")
+        return tracks.mapIndexed { index, track ->
+            playableItem("$NEW_RELEASE_TRACK_PREFIX$label:$token:$index", track)
+        }
+    }
+
+    private fun playNewReleaseTrack(mediaId: String, player: MusicPlayer): Boolean {
+        val parts = mediaId.removePrefix(NEW_RELEASE_TRACK_PREFIX).split(':', limit = 3)
+        val index = parts.getOrNull(2)?.toIntOrNull() ?: return false
+        val tracks = synchronized(searchQueues) { searchQueues[parts.getOrNull(1).orEmpty()] } ?: return false
+        val label = decodeEntityId(parts.first()).orEmpty().ifBlank { "Nuove uscite" }
+        return playQueueFrom(tracks, index, label, player)
+    }
+
+    /** Voice "play Nuove uscite": the freshest releases, flattened to a queue. */
+    private suspend fun newReleaseTracks(): List<PlayableTrack> {
+        val shelf = newReleases()
+        val tracks = mutableListOf<PlayableTrack>()
+        for (card in (shelf.singles + shelf.albums).take(NEW_RELEASE_ALBUM_BATCH)) {
+            val page = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+                innerTube.fetchAlbumPage(card.browseId, card.title, card.subtitle.orEmpty())
+            } ?: continue
+            tracks += page.tracks
+            if (tracks.size >= NEW_RELEASES_LIMIT) break
+        }
+        return tracks.distinctBy { it.videoId }.take(NEW_RELEASES_LIMIT)
     }
 
     private suspend fun playPlaylist(id: Long?, index: Int?, player: MusicPlayer): Boolean {
@@ -1441,7 +1524,14 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val CHART_PREFIX = "chart:"
         /** Browsable country page; the code after the colon is `ChartCountry.code`. */
         private const val CHART_COUNTRY_PREFIX = "chart-country:"
-        private const val NEW_RELEASE_PREFIX = "new-release:"
+        private const val NEW_RELEASE_GROUP_PREFIX = "new-release-group:"
+        private const val NEW_RELEASE_ALBUM_PREFIX = "new-release-album:"
+        private const val NEW_RELEASE_PLAYLIST_PREFIX = "new-release-playlist:"
+        /** Base64 release name, then the queue token, then the row index. */
+        private const val NEW_RELEASE_TRACK_PREFIX = "new-release-track:"
+        private const val NEW_RELEASE_SINGLES_GROUP = "singles"
+        private const val NEW_RELEASE_ALBUMS_GROUP = "albums"
+        private const val NEW_RELEASE_PLAYLISTS_GROUP = "playlists"
         // Spotify-shaped tabs: Home / Recenti / Sfoglia / Libreria.
         const val LIBRARY_ALBUMS_ID = "category:library:albums"
         private const val LIBRARY_ARTISTS_ID = "category:library:artists"
@@ -1470,6 +1560,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private val EUROPEAN_CHART_COUNTRIES = listOf("IT", "GB", "DE", "FR", "ES")
         private const val NEW_RELEASES_LIMIT = 24
         private const val NEW_RELEASES_NETWORK_BUDGET_MS = 10_000L
+        /** Albums opened for the voice "play Nuove uscite" queue. */
+        private const val NEW_RELEASE_ALBUM_BATCH = 4
         /** Android Auto drops a search that answers late. */
         private const val SEARCH_NETWORK_BUDGET_MS = 6_000L
         private const val SEARCH_DETAIL_NETWORK_BUDGET_MS = 8_000L
