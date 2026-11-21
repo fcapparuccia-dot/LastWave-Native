@@ -17,6 +17,7 @@ import com.lastwave.app.data.music.MoodTile
 import com.lastwave.app.data.music.MoodsRepository
 import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.music.YouTubePlaylistSummary
+import com.lastwave.app.data.newreleases.NewReleasesRepository
 import com.lastwave.app.data.podcast.PodcastRepository
 import com.lastwave.app.data.podcast.toPlayableTrack
 import com.lastwave.app.data.playlist.CarMediaFavorite
@@ -63,6 +64,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val moodsRepository: MoodsRepository,
     private val podcastRepository: PodcastRepository,
     private val recentPlaylistStore: RecentPlaylistStore,
+    private val newReleasesRepository: NewReleasesRepository,
     // Lazy: the chart node is the only consumer, and building the whole
     // recommendation pipeline for a widget tap or a browse root would cost
     // more than the node it feeds.
@@ -89,6 +91,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
     // download, no history. Cached so reopening the node in a car is instant.
     @Volatile private var chartTracks: List<PlayableTrack> = emptyList()
     @Volatile private var chartFetchedAtMillis = 0L
+    // New releases: same shelf as the phone's Home tab, so the car shows what
+    // the user already sees in the app instead of a separate selection.
+    @Volatile private var newReleaseTracks: List<PlayableTrack> = emptyList()
+    @Volatile private var newReleasesFetchedAtMillis = 0L
     // Moods/genres: the browse tab resolves the same page on every ignition,
     // so both the tile list and each opened genre page are kept for a while.
     @Volatile private var cachedMoodGroups: List<MoodGroup>? = null
@@ -122,6 +128,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
             parentId == QUEUE_ID -> state.queue.mapIndexed(::queueTrackItem)
             parentId == CHARTS_ID -> charts().mapIndexed { index, track ->
                 playableItem("$CHART_PREFIX$index", track)
+            }
+            parentId == NEW_RELEASES_ID -> newReleases().mapIndexed { index, track ->
+                playableItem("$NEW_RELEASE_PREFIX$index", track)
             }
             parentId == PLAYLISTS_ID -> getMergedPlaylists().filter { it.hasPlayableTracks() }.map { playlist ->
                 val trackCount = playlist.remoteTrackCount ?: playlist.tracks.size
@@ -277,6 +286,13 @@ class AndroidAutoMediaLibrary @Inject constructor(
             playArtistRadio(decodeEntityId(mediaId.removePrefix(ARTIST_RADIO_PREFIX)).orEmpty(), null, player)
         mediaId == RECENT_ID -> playQueueFrom(recentlyPlayedTracks(), 0, "Recently played", player)
         mediaId == CHARTS_ID -> playQueueFrom(charts(), 0, "Popular now", player)
+        mediaId == NEW_RELEASES_ID -> playQueueFrom(newReleases(), 0, "New releases", player)
+        mediaId.startsWith(NEW_RELEASE_PREFIX) -> playQueueFrom(
+            newReleases(),
+            mediaId.removePrefix(NEW_RELEASE_PREFIX).toIntOrNull() ?: -1,
+            "New releases",
+            player,
+        )
         mediaId.startsWith(RECENT_PREFIX) -> playQueueFrom(
             recentlyPlayedTracks(),
             mediaId.removePrefix(RECENT_PREFIX).toIntOrNull() ?: -1,
@@ -774,6 +790,13 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 subtitle = "Di tendenza su YouTube Music",
             ),
         )
+        add(
+            browsableItem(
+                mediaId = NEW_RELEASES_ID,
+                title = "Nuove uscite",
+                subtitle = "Le novità su YouTube Music",
+            ),
+        )
         val recent = runCatching { recentlyPlayedTracks() }.getOrDefault(emptyList())
         if (recent.isNotEmpty()) {
             add(
@@ -1072,6 +1095,22 @@ class AndroidAutoMediaLibrary @Inject constructor(
         return fresh
     }
 
+    /** Same shelf as the phone's "Nuove uscite", cached per car session. */
+    private suspend fun newReleases(): List<PlayableTrack> {
+        val cached = newReleaseTracks
+        if (cached.isNotEmpty() && System.currentTimeMillis() - newReleasesFetchedAtMillis < CHART_CACHE_MS) {
+            return cached
+        }
+        val fresh = bounded(NEW_RELEASES_NETWORK_BUDGET_MS) {
+            newReleasesRepository.fetchPreview(trackLimit = NEW_RELEASES_LIMIT)
+                .map { it.toPlayableTrack(null, null) }
+        }.orEmpty()
+        if (fresh.isEmpty()) return cached
+        newReleaseTracks = fresh
+        newReleasesFetchedAtMillis = System.currentTimeMillis()
+        return fresh
+    }
+
     private suspend fun playPlaylist(id: Long?, index: Int?, player: MusicPlayer): Boolean {
         val playlist = id?.let { resolvePlaylistWithTracks(it) } ?: return false
         val tracks = playlist.tracks.map { it.toPlayableTrack() }
@@ -1269,6 +1308,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         const val DOWNLOADS_ID = "category:downloads"
         const val RECENT_ID = "category:recent"
         const val CHARTS_ID = "category:charts"
+        const val NEW_RELEASES_ID = "category:new-releases"
         const val FAVORITES_ID = "category:favorites"
         const val FAVORITE_ACTION_PREFIX = "favorite-action:"
         private const val QUEUE_TRACK_PREFIX = "queue:"
@@ -1287,6 +1327,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val SAVED_PLAYLIST_FAVORITE_TYPE = "saved_playlist"
         private const val RECENT_PREFIX = "recent:"
         private const val CHART_PREFIX = "chart:"
+        private const val NEW_RELEASE_PREFIX = "new-release:"
         // Spotify-shaped tabs: Home / Recenti / Sfoglia / Libreria.
         const val LIBRARY_ALBUMS_ID = "category:library:albums"
         private const val LIBRARY_ARTISTS_ID = "category:library:artists"
@@ -1310,6 +1351,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val RECENT_LIMIT = 50
         private const val CHART_LIMIT = 40
         private const val CHART_CACHE_MS = 30 * 60 * 1000L
+        private const val NEW_RELEASES_LIMIT = 24
+        private const val NEW_RELEASES_NETWORK_BUDGET_MS = 10_000L
         /** Android Auto drops a search that answers late. */
         private const val SEARCH_NETWORK_BUDGET_MS = 6_000L
         private const val SEARCH_DETAIL_NETWORK_BUDGET_MS = 8_000L

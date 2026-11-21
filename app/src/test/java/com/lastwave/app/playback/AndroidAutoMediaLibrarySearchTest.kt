@@ -11,6 +11,7 @@ import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodsRepository
 import com.lastwave.app.data.music.YouTubePlaylistResult
 import com.lastwave.app.data.music.YouTubeMusicTrack
+import com.lastwave.app.data.newreleases.NewReleasesRepository
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
 import com.lastwave.app.data.playlist.RecentPlaylistStore
@@ -61,6 +62,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            newReleasesRepository = mockk(relaxed = true),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         val album = SearchResultItem(
@@ -148,8 +150,8 @@ class AndroidAutoMediaLibrarySearchTest {
             listOf("Home", "Recenti", "Sfoglia", "Libreria"),
             root.map { it.description.title.toString() },
         )
-        val libraryFolder = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ID, MusicPlayerState())
-        assertTrue(libraryFolder.any { it.description.title == "Preferiti" })
+        val homeFolder = library.loadChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
+        assertTrue(homeFolder.any { it.description.title == "Preferiti" })
         val savedAlbums = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID, MusicPlayerState())
         assertEquals(listOf("Album"), savedAlbums.map { it.description.title.toString() })
 
@@ -160,6 +162,43 @@ class AndroidAutoMediaLibrarySearchTest {
         coEvery { artistRepository.getArtistRadio("Artist", any()) } returns emptyList()
         assertTrue(library.playMediaId(radioItems.single().description.mediaId!!, player))
         verify { player.playQueue(any(), startIndex = 0, sourceLabel = "Artist Radio") }
+    }
+
+    @Test
+    fun homeListsNewReleasesBelowChartsAndPlaysThem() = runBlocking {
+        val newReleasesRepository = mockk<NewReleasesRepository>()
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = mockk(relaxed = true),
+            ytMusicLibraryManager = mockk(relaxed = true),
+            downloadedTrackDao = mockk(relaxed = true),
+            searchRepository = mockk(relaxed = true),
+            innerTube = mockk(relaxed = true),
+            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
+            artistRepository = mockk(relaxed = true),
+            statsRepository = mockk(relaxed = true),
+            moodsRepository = mockk(relaxed = true),
+            podcastRepository = mockk(relaxed = true),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            newReleasesRepository = newReleasesRepository,
+            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
+        )
+        coEvery { newReleasesRepository.fetchPreview(any(), any()) } returns listOf(
+            YouTubeMusicTrack(videoId = "new1", title = "Fresh single", artist = "New artist"),
+            YouTubeMusicTrack(videoId = "new2", title = "Fresh album cut", artist = "New artist"),
+        )
+
+        val homeTitles = library.loadChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
+            .map { it.description.title.toString() }
+        val chartsIndex = homeTitles.indexOf("Popolari ora")
+        assertEquals("Nuove uscite", homeTitles[chartsIndex + 1])
+
+        val tracks = library.loadChildren(AndroidAutoMediaLibrary.NEW_RELEASES_ID, MusicPlayerState())
+        assertEquals(listOf("Fresh single", "Fresh album cut"), tracks.map { it.description.title.toString() })
+
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(tracks[1].description.mediaId!!, player))
+        verify { player.playQueue(any(), startIndex = 1, sourceLabel = "New releases") }
     }
 
     private class MemoryPreferences : DataStore<Preferences> {

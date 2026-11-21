@@ -32,10 +32,18 @@ utente Spotify ritrova in auto:
 
 | Scheda | Contenuto (`loadChildren`) |
 |---|---|
-| **Home** | brano/coda in riproduzione, Liked Songs, **Popolari ora**, ascoltati di recente, Download, musica locale, **Preferiti** (solo se non vuoto) |
+| **Home** | brano/coda in riproduzione, Liked Songs, **Popolari ora**, **Nuove uscite**, ascoltati di recente, Download, musica locale, **Preferiti** (solo se non vuoto) |
 | **Recenti** | playlist avviate davvero (dalla più recente), poi i brani ascoltati di recente |
 | **Sfoglia** | gruppi di generi/mood di YouTube Music → generi → playlist del genere → brani |
 | **Libreria** | Playlist salvate, Album salvati, Artisti (dalla cronologia di ascolto), Podcast e show |
+
+**Nuove uscite** riusa la stessa shelf della Home del telefono: gli album di
+`getCachedFeed().newReleases` (o `InnerTubeMusicApi.fetchNewReleases()` quando
+la cache è vuota) vengono appiattiti nei loro brani da
+`NewReleasesRepository.fetchPreview()`, senza toccare la coda di paging usata
+dalla schermata del telefono. La lista è limitata a 24 brani da 4 album, con un
+budget di rete di 10 secondi e cache per sessione auto di 30 minuti; se la rete
+non risponde, il nodo resta vuoto invece di bloccare l'apertura.
 
 La cronologia delle playlist non è deducibile da `SongPlayStatsRepository`, che
 conosce solo i brani: `RecentPlaylistStore` la registra nel momento in cui una

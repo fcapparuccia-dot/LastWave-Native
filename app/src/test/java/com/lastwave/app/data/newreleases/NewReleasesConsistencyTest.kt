@@ -119,4 +119,30 @@ class NewReleasesConsistencyTest {
         assertThat(batchTracks).isNotEmpty()
         assertThat(batchTracks.first().artist).isEqualTo("Regional Artist")
     }
+
+    @Test
+    fun fetchPreview_flattensNewReleaseAlbumsIntoOnePlayableList() = runTest {
+        val innerTube: InnerTubeMusicApi = mockk(relaxed = true)
+        val feedRepository: FeedRepository = mockk(relaxed = true)
+
+        every { feedRepository.getCachedFeed() } returns FeedData(
+            newReleases = listOf(
+                YouTubePlaylistSummary(id = "MPREb_a", title = "Album A"),
+                YouTubePlaylistSummary(id = "MPREb_b", title = "Album B"),
+            ),
+        )
+        coEvery { innerTube.fetchAlbumPage("MPREb_a", "Album A", "") } returns AlbumPageData(
+            title = "Album A",
+            artist = "Artist A",
+            browseId = "MPREb_a",
+            tracks = listOf(PlayableTrack(title = "A1", artist = "Artist A", videoId = "a1")),
+        )
+        coEvery { innerTube.fetchAlbumPage("MPREb_b", "Album B", "") } returns null
+
+        val repository = NewReleasesRepository(innerTube, feedRepository)
+        val tracks = repository.fetchPreview(trackLimit = 24)
+
+        // An album page that fails to load must not hide the other albums.
+        assertThat(tracks.map { it.videoId }).containsExactly("a1")
+    }
 }
