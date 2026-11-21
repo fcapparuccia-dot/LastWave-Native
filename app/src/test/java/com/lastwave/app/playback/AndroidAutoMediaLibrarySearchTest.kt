@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import com.lastwave.app.data.generate.GeneratedTrack
 import com.lastwave.app.data.generate.GenerateRepository
+import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodsRepository
@@ -36,6 +37,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -63,6 +65,7 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             newReleasesRepository = mockk(relaxed = true),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         val album = SearchResultItem(
@@ -181,6 +184,7 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             newReleasesRepository = newReleasesRepository,
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
             generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         coEvery { newReleasesRepository.fetchPreview(any(), any()) } returns listOf(
@@ -199,6 +203,79 @@ class AndroidAutoMediaLibrarySearchTest {
         val player = mockk<MusicPlayer>(relaxed = true)
         assertTrue(library.playMediaId(tracks[1].description.mediaId!!, player))
         verify { player.playQueue(any(), startIndex = 1, sourceLabel = "New releases") }
+    }
+
+    @Test
+    fun chartsPageOffersTheCountryPickerAndPlaysTheSelectedChart() = runBlocking {
+        val innerTube = mockk<InnerTubeMusicApi>(relaxed = true)
+        every { innerTube.getEffectiveHlGl() } returns ("it" to "IT")
+        coEvery { innerTube.fetchCharts("IT") } returns listOf(
+            YouTubeMusicTrack(videoId = "it1", title = "Italiana", artist = "Geolier"),
+        )
+        coEvery { innerTube.fetchCharts("US") } returns listOf(
+            YouTubeMusicTrack(videoId = "us1", title = "Americana", artist = "Drake"),
+        )
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = mockk(relaxed = true),
+            ytMusicLibraryManager = mockk(relaxed = true),
+            downloadedTrackDao = mockk(relaxed = true),
+            searchRepository = mockk(relaxed = true),
+            innerTube = innerTube,
+            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
+            artistRepository = mockk(relaxed = true),
+            statsRepository = mockk(relaxed = true),
+            moodsRepository = mockk(relaxed = true),
+            podcastRepository = mockk(relaxed = true),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            newReleasesRepository = mockk(relaxed = true),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
+            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
+        )
+
+        // The device region is the default selection, and it is the first row.
+        val chartPage = library.loadChildren(AndroidAutoMediaLibrary.CHARTS_ID, MusicPlayerState())
+        assertEquals("Country: Italy", chartPage.first().description.title.toString())
+        assertEquals(listOf("chart:IT:0"), chartPage.drop(1).map { it.description.mediaId })
+
+        val countries = library.loadChildren(chartPage.first().description.mediaId!!, MusicPlayerState())
+        assertEquals(
+            listOf("✓ Italy", "United Kingdom", "United States", "Europe", "Worldwide"),
+            countries.map { it.description.title.toString() },
+        )
+        assertEquals(
+            listOf("chart-country:IT", "chart-country:GB", "chart-country:US", "chart-country:EU", "chart-country:ZZ"),
+            countries.map { it.description.mediaId },
+        )
+
+        val usPage = library.loadChildren(countries[2].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("chart:US:0"), usPage.map { it.description.mediaId })
+
+        // Opening a country is the selection: the chart page now shows the US.
+        val refreshed = library.loadChildren(AndroidAutoMediaLibrary.CHARTS_ID, MusicPlayerState())
+        assertEquals("Country: United States", refreshed.first().description.title.toString())
+
+        // "chart:IT:0" still plays Italy even though the picker now says US.
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId("chart:IT:0", player))
+        verify {
+            player.playQueue(
+                match { tracks -> tracks.map { it.title } == listOf("Italiana") },
+                startIndex = 0,
+                sourceLabel = "Popular now",
+            )
+        }
+
+        // Tapping a country row plays that country and remembers it.
+        assertTrue(library.playMediaId("chart-country:US", player))
+        verify {
+            player.playQueue(
+                match { tracks -> tracks.map { it.title } == listOf("Americana") },
+                startIndex = 0,
+                sourceLabel = "Popular now",
+            )
+        }
+        assertEquals("Country: United States", library.loadChildren(AndroidAutoMediaLibrary.CHARTS_ID, MusicPlayerState()).first().description.title.toString())
     }
 
     private class MemoryPreferences : DataStore<Preferences> {

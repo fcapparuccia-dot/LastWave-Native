@@ -525,6 +525,7 @@ class SettingsPreferences @Inject constructor(
         val MUSIC_HAPTICS_BATTERY_SAVER = booleanPreferencesKey("lw_music_haptics_battery_saver")
         val USE_LEGACY_TRACK_MENU = booleanPreferencesKey("lw_use_legacy_track_menu")
         val USE_MENU_BLUR = booleanPreferencesKey("lw_use_menu_blur")
+        val CHARTS_COUNTRY = stringPreferencesKey("lw_charts_country")
     }
 
     val settings: Flow<MiscSettings> = dataStore.data
@@ -680,6 +681,16 @@ class SettingsPreferences @Inject constructor(
             preferences[Keys.STORAGE_CACHE_LAST_CLEAR_AT] = clearedAtEpochMs.coerceAtLeast(0L)
             preferences[Keys.STORAGE_CACHE_LAST_CLEAR_FREED_BYTES] = freedBytes.coerceAtLeast(0L)
         }
+    }
+
+    /** Chart country picked in the car (Android Auto "Popolari ora"): a YouTube
+     *  region code, `ZZ` for worldwide. Null follows the device region. */
+    val chartsCountry: Flow<String?> = dataStore.data
+        .recoverPreferences("SettingsPreferences")
+        .map { it.readSafely(Keys.CHARTS_COUNTRY)?.takeIf(String::isNotBlank) }
+
+    suspend fun setChartsCountry(countryCode: String) {
+        dataStore.edit { it[Keys.CHARTS_COUNTRY] = countryCode }
     }
 
     val addonUrl: StateFlow<String?> = settings

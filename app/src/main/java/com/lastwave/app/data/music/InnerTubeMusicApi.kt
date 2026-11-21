@@ -872,9 +872,17 @@ class InnerTubeMusicApi @Inject constructor(
     }
 
 
-    suspend fun fetchCharts(): List<YouTubeMusicTrack> = withContext(Dispatchers.IO) {
+    /** [countryCode] is the chart country (ISO 3166-1 alpha-2, `ZZ` = worldwide).
+     *  Null keeps the chart on the visitor's own country, which is what the app
+     *  screens show. A `gl` override never changes the chart content: the country
+     *  only takes effect through `formData.selectedValues`. */
+    suspend fun fetchCharts(countryCode: String? = null): List<YouTubeMusicTrack> = withContext(Dispatchers.IO) {
         runCatching {
-            val root = browseRoot(YT_CHARTS_BROWSE_ID, authenticated = false)
+            val root = browseRoot(
+                YT_CHARTS_BROWSE_ID,
+                authenticated = false,
+                chartCountry = countryCode,
+            )
             parseSongRenderers(root)
         }.getOrDefault(emptyList())
     }
@@ -1106,7 +1114,12 @@ class InnerTubeMusicApi @Inject constructor(
         }.also { it.start() }.await()
 
     /** Identity of the signed-in account (account_menu endpoint). */
-    internal suspend fun browseRoot(browseId: String, authenticated: Boolean, params: String? = null): JsonObject {
+    internal suspend fun browseRoot(
+        browseId: String,
+        authenticated: Boolean,
+        params: String? = null,
+        chartCountry: String? = null,
+    ): JsonObject {
         var config = getWebConfig()
         suspend fun executeBrowse(cfg: WebConfig): JsonObject {
             return post(
@@ -1115,6 +1128,15 @@ class InnerTubeMusicApi @Inject constructor(
                     put("context", context("WEB_REMIX", cfg.clientVersion, cfg.visitorData))
                     put("browseId", browseId)
                     params?.takeIf { it.isNotBlank() }?.let { put("params", it) }
+                    // Charts only: the country dropdown is form data, not params.
+                    chartCountry?.takeIf { it.isNotBlank() }?.let { code ->
+                        put(
+                            "formData",
+                            buildJsonObject {
+                                put("selectedValues", JsonArray(listOf(JsonPrimitive(code))))
+                            },
+                        )
+                    }
                 },
                 clientName = "WEB_REMIX",
                 clientVersion = cfg.clientVersion,

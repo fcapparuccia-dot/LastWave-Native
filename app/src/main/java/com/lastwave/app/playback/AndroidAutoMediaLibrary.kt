@@ -8,6 +8,7 @@ import android.util.Base64
 import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.generate.LocalAudioFormats
 import com.lastwave.app.data.generate.youtubeVideoIdOrNull
+import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.local.db.DownloadedTrackEntity
 import com.lastwave.app.data.music.HomeShelfItem
@@ -39,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.coroutineScope
@@ -65,6 +67,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val podcastRepository: PodcastRepository,
     private val recentPlaylistStore: RecentPlaylistStore,
     private val newReleasesRepository: NewReleasesRepository,
+    private val settingsPreferences: SettingsPreferences,
     // Lazy: the chart node is the only consumer, and building the whole
     // recommendation pipeline for a widget tap or a browse root would cost
     // more than the node it feeds.
@@ -87,10 +90,17 @@ class AndroidAutoMediaLibrary @Inject constructor(
         val playlists: List<SearchResultItem>,
     )
 
+    /** Charts are country-scoped: the cache remembers which country it holds so
+     *  switching the country can never show another chart's tracks. */
+    private data class ChartCache(
+        val country: ChartCountry,
+        val tracks: List<PlayableTrack>,
+        val fetchedAtMillis: Long,
+    )
+
     // Charts are the one node that works on a fresh install: no playlist, no
     // download, no history. Cached so reopening the node in a car is instant.
-    @Volatile private var chartTracks: List<PlayableTrack> = emptyList()
-    @Volatile private var chartFetchedAtMillis = 0L
+    @Volatile private var chartCache: ChartCache? = null
     // New releases: same shelf as the phone's Home tab, so the car shows what
     // the user already sees in the app instead of a separate selection.
     @Volatile private var newReleaseTracks: List<PlayableTrack> = emptyList()
@@ -126,8 +136,38 @@ class AndroidAutoMediaLibrary @Inject constructor(
             parentId == LIBRARY_PODCASTS_ID -> podcastShowItems()
             parentId.startsWith(PODCAST_SHOW_PREFIX) -> podcastShowChildren(parentId)
             parentId == QUEUE_ID -> state.queue.mapIndexed(::queueTrackItem)
-            parentId == CHARTS_ID -> charts().mapIndexed { index, track ->
-                playableItem("$CHART_PREFIX$index", track)
+            parentId == CHARTS_ID -> {
+                val country = chartCountry()
+                buildList {
+                    // The country picker is the first row of the chart page, so
+                    // the car gets YouTube Music's chart dropdown without a
+                    // separate settings screen.
+                    add(
+                        browsableItem(
+                            mediaId = CHART_COUNTRY_PICKER_ID,
+                            title = "Country: ${country.label}",
+                            subtitle = "Tap to change country",
+                        ),
+                    )
+                    addAll(chartTrackItems(charts(country), country))
+                }
+            }
+            parentId == CHART_COUNTRY_PICKER_ID -> {
+                val selected = chartCountry()
+                ChartCountry.entries.map { country ->
+                    // Opening a country stores it, the way a dropdown selection does.
+                    browsableItem(
+                        mediaId = "$CHART_COUNTRY_PREFIX${country.code}",
+                        title = if (country == selected) "✓ ${country.label}" else country.label,
+                        subtitle = if (country == selected) "Selected" else "Tap to select",
+                    )
+                }
+            }
+            parentId.startsWith(CHART_COUNTRY_PREFIX) -> {
+                val country = ChartCountry.fromCode(parentId.removePrefix(CHART_COUNTRY_PREFIX))
+                    ?: chartCountry()
+                selectChartCountry(country)
+                chartTrackItems(charts(country), country)
             }
             parentId == NEW_RELEASES_ID -> newReleases().mapIndexed { index, track ->
                 playableItem("$NEW_RELEASE_PREFIX$index", track)
@@ -285,7 +325,11 @@ class AndroidAutoMediaLibrary @Inject constructor(
         mediaId.startsWith(ARTIST_RADIO_PREFIX) ->
             playArtistRadio(decodeEntityId(mediaId.removePrefix(ARTIST_RADIO_PREFIX)).orEmpty(), null, player)
         mediaId == RECENT_ID -> playQueueFrom(recentlyPlayedTracks(), 0, "Recently played", player)
-        mediaId == CHARTS_ID -> playQueueFrom(charts(), 0, "Popular now", player)
+        mediaId == CHARTS_ID -> playQueueFrom(charts(chartCountry()), 0, "Popular now", player)
+        mediaId.startsWith(CHART_COUNTRY_PREFIX) -> playChartCountry(
+            mediaId.removePrefix(CHART_COUNTRY_PREFIX),
+            player,
+        )
         mediaId == NEW_RELEASES_ID -> playQueueFrom(newReleases(), 0, "New releases", player)
         mediaId.startsWith(NEW_RELEASE_PREFIX) -> playQueueFrom(
             newReleases(),
@@ -299,12 +343,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             "Recently played",
             player,
         )
-        mediaId.startsWith(CHART_PREFIX) -> playQueueFrom(
-            charts(),
-            mediaId.removePrefix(CHART_PREFIX).toIntOrNull() ?: -1,
-            "Popular now",
-            player,
-        )
+        mediaId.startsWith(CHART_PREFIX) -> playChartTrack(mediaId, player)
         mediaId.startsWith(QUEUE_TRACK_PREFIX) -> {
             val index = mediaId.removePrefix(QUEUE_TRACK_PREFIX).toIntOrNull()
             if (index != null && index in player.state.value.queue.indices) {
@@ -720,7 +759,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         if (runCatching { playDownloads(player) }.getOrDefault(false)) return true
         // Nothing saved and nothing downloaded: charts still start music on a
         // fresh install, so "play music on LastWave" is never a dead request.
-        if (playQueueFrom(runCatching { charts() }.getOrDefault(emptyList()), 0, "Popular now", player)) return true
+        if (playQueueFrom(runCatching { charts(chartCountry()) }.getOrDefault(emptyList()), 0, "Popular now", player)) return true
         return playQueueFrom(
             runCatching { recentlyPlayedTracks() }.getOrDefault(emptyList()),
             0,
@@ -1080,19 +1119,91 @@ class AndroidAutoMediaLibrary @Inject constructor(
             }
             .distinctBy { "${it.title.lowercase()}|${it.artist.lowercase()}" }
 
-    /** Account-free chart picks, cached: this is what fills an empty library. */
-    private suspend fun charts(): List<PlayableTrack> {
-        val cached = chartTracks
-        if (cached.isNotEmpty() && System.currentTimeMillis() - chartFetchedAtMillis < CHART_CACHE_MS) {
-            return cached
+    /** Chart picks of [country], cached: this is what fills an empty library. */
+    private suspend fun charts(country: ChartCountry): List<PlayableTrack> {
+        val cached = chartCache
+        if (cached != null &&
+            cached.country == country &&
+            System.currentTimeMillis() - cached.fetchedAtMillis < CHART_CACHE_MS
+        ) {
+            return cached.tracks
         }
         val fresh = bounded(CHART_NETWORK_BUDGET_MS) {
-            generateRepository.get().fetchChartTracks(CHART_LIMIT).map { it.toPlayableTrack() }
-        }.orEmpty()
-        if (fresh.isEmpty()) return cached
-        chartTracks = fresh
-        chartFetchedAtMillis = System.currentTimeMillis()
+            when (country) {
+                // YouTube Music has no European chart: interleave the biggest
+                // markets so "Europe" is continental instead of one country's chart.
+                ChartCountry.EUROPE -> europeCharts()
+                else -> innerTube.fetchCharts(country.code).map { it.toPlayableTrack() }
+            }
+        }?.take(CHART_LIMIT).orEmpty()
+        if (fresh.isEmpty()) {
+            // A rejected chart call must not leave the car's only
+            // fresh-install node empty.
+            val fallback = bounded(CHART_NETWORK_BUDGET_MS) {
+                generateRepository.get().fetchChartTracks(CHART_LIMIT).map { it.toPlayableTrack() }
+            }.orEmpty()
+            return fallback.ifEmpty { cached?.takeIf { it.country == country }?.tracks.orEmpty() }
+        }
+        chartCache = ChartCache(country, fresh, System.currentTimeMillis())
         return fresh
+    }
+
+    private suspend fun europeCharts(): List<PlayableTrack> = coroutineScope {
+        EUROPEAN_CHART_COUNTRIES
+            .map { code -> async { innerTube.fetchCharts(code).map { it.toPlayableTrack() } } }
+            .awaitAll()
+            .let(::interleaveCharts)
+    }
+
+    /** Round-robin merge: every market contributes its #1 before any #2. */
+    private fun interleaveCharts(charts: List<List<PlayableTrack>>): List<PlayableTrack> {
+        val merged = LinkedHashMap<String, PlayableTrack>()
+        val longest = charts.maxOfOrNull { it.size } ?: 0
+        for (rank in 0 until longest) {
+            for (tracks in charts) {
+                val track = tracks.getOrNull(rank) ?: continue
+                merged.putIfAbsent(
+                    track.videoId ?: "${track.title.lowercase()}|${track.artist.lowercase()}",
+                    track,
+                )
+            }
+        }
+        return merged.values.toList()
+    }
+
+    private fun chartTrackItems(
+        tracks: List<PlayableTrack>,
+        country: ChartCountry,
+    ): List<MediaBrowserCompat.MediaItem> = tracks.mapIndexed { index, track ->
+        playableItem("$CHART_PREFIX${country.code}:$index", track)
+    }
+
+    /** The country saved in the car, else the device's own region. */
+    private suspend fun chartCountry(): ChartCountry {
+        val saved = settingsPreferences.chartsCountry.first()
+        return ChartCountry.fromCode(saved)
+            ?: runCatching { ChartCountry.fromCode(innerTube.getEffectiveHlGl().second) }.getOrNull()
+            ?: ChartCountry.WORLD
+    }
+
+    private suspend fun selectChartCountry(country: ChartCountry) {
+        settingsPreferences.setChartsCountry(country.code)
+    }
+
+    /** "chart:US:7" carries its country, so a list browsed before a country
+     *  switch can never play the wrong song; the legacy "chart:7" keeps the
+     *  current selection. */
+    private suspend fun playChartTrack(mediaId: String, player: MusicPlayer): Boolean {
+        val parts = mediaId.removePrefix(CHART_PREFIX).split(':')
+        val index = parts.lastOrNull()?.toIntOrNull() ?: return false
+        val country = ChartCountry.fromCode(parts.getOrNull(parts.size - 2)) ?: chartCountry()
+        return playQueueFrom(charts(country), index, "Popular now", player)
+    }
+
+    private suspend fun playChartCountry(code: String, player: MusicPlayer): Boolean {
+        val country = ChartCountry.fromCode(code) ?: return false
+        selectChartCountry(country)
+        return playQueueFrom(charts(country), 0, "Popular now", player)
     }
 
     /** Same shelf as the phone's "Nuove uscite", cached per car session. */
@@ -1308,6 +1419,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         const val DOWNLOADS_ID = "category:downloads"
         const val RECENT_ID = "category:recent"
         const val CHARTS_ID = "category:charts"
+        private const val CHART_COUNTRY_PICKER_ID = "category:charts:country"
         const val NEW_RELEASES_ID = "category:new-releases"
         const val FAVORITES_ID = "category:favorites"
         const val FAVORITE_ACTION_PREFIX = "favorite-action:"
@@ -1327,6 +1439,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val SAVED_PLAYLIST_FAVORITE_TYPE = "saved_playlist"
         private const val RECENT_PREFIX = "recent:"
         private const val CHART_PREFIX = "chart:"
+        /** Browsable country page; the code after the colon is `ChartCountry.code`. */
+        private const val CHART_COUNTRY_PREFIX = "chart-country:"
         private const val NEW_RELEASE_PREFIX = "new-release:"
         // Spotify-shaped tabs: Home / Recenti / Sfoglia / Libreria.
         const val LIBRARY_ALBUMS_ID = "category:library:albums"
@@ -1351,6 +1465,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val RECENT_LIMIT = 50
         private const val CHART_LIMIT = 40
         private const val CHART_CACHE_MS = 30 * 60 * 1000L
+        // "Europa" has no chart of its own; the five biggest European markets
+        // are interleaved into one list.
+        private val EUROPEAN_CHART_COUNTRIES = listOf("IT", "GB", "DE", "FR", "ES")
         private const val NEW_RELEASES_LIMIT = 24
         private const val NEW_RELEASES_NETWORK_BUDGET_MS = 10_000L
         /** Android Auto drops a search that answers late. */
@@ -1358,5 +1475,25 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val SEARCH_DETAIL_NETWORK_BUDGET_MS = 8_000L
         private const val VOICE_SEARCH_BUDGET_MS = 10_000L
         private const val CHART_NETWORK_BUDGET_MS = 8_000L
+    }
+}
+
+/** YouTube Music's charts are country-scoped through `formData.selectedValues`
+ *  (a `gl` override still returns the visitor's own chart). `ZZ` is its
+ *  worldwide code and there is no European one: `EU` is rejected and silently
+ *  falls back to worldwide, so "Europa" is merged from the big markets instead. */
+private enum class ChartCountry(val code: String, val label: String) {
+    ITALY("IT", "Italy"),
+    UNITED_KINGDOM("GB", "United Kingdom"),
+    UNITED_STATES("US", "United States"),
+    EUROPE("EU", "Europe"),
+    WORLD("ZZ", "Worldwide"),
+    ;
+
+    companion object {
+        fun fromCode(code: String?): ChartCountry? {
+            val normalized = code?.trim()?.uppercase() ?: return null
+            return entries.firstOrNull { it.code == normalized }
+        }
     }
 }
