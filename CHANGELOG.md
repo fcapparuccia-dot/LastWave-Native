@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.2.3] - 2026-11-21
+
+### ✨ What's New
+
+* **Android Auto "Nuove uscite" Shelf:** The car Home now lists the same new releases as the phone's Home shelf, right below **Popolari ora**, and plays them as one queue. The car-side shelf caches for 30 minutes per session with a 10 second network budget, so a flaky response leaves the tab usable instead of blocking it.
+* **Android Auto "Nuove uscite" Split into Singoli, Album and Playlist:** The node used to be empty in the car, because only playlist renderers were read; it now browses the real endpoints and exposes three sub-menus (Singoli / Album / Playlist) with per-release track lists and voice search "play Nuove uscite".
+* **Android Auto "Popolari ora" Country:** The charts page opens with a **Country: <current>** row leading to a country sub-page (Italy, United Kingdom, United States, Europe, Worldwide). The choice is persisted, so the car keeps it after a restart, and chart tracks carry their country (for example `chart:US:7`), so a list browsed before a switch can never play the wrong song. Europe has no YouTube Music chart of its own and is a round-robin merge of IT/GB/DE/FR/ES.
+
 ## [5.2.1] - 2026-11-13
 
 ### ✨ What's New
