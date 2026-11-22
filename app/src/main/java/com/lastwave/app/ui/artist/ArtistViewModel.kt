@@ -7,6 +7,7 @@ import com.lastwave.app.data.model.ArtistPageData
 import com.lastwave.app.data.repository.ArtistRepository
 import com.lastwave.app.playback.MusicPlayer
 import com.lastwave.app.playback.PlayableTrack
+import com.lastwave.app.playback.artistRadioLabel
 import com.lastwave.app.ui.generate.MixLauncher
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -141,7 +142,7 @@ class ArtistViewModel @Inject constructor(
             }
 
             if (finalQueue.isNotEmpty()) {
-                musicPlayer.playQueue(finalQueue, startIndex = 0, sourceLabel = "$artistName Radio")
+                musicPlayer.playQueue(finalQueue, startIndex = 0, sourceLabel = artistRadioLabel(artistName))
             }
         }
     }

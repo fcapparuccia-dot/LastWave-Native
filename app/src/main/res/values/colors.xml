@@ -12,4 +12,9 @@
     <color name="ic_launcher_background_desktop">#FFBFF30C</color>
     <color name="ic_launcher_background_white">#FFFFFFFF</color>
     <color name="ic_launcher_background_black">#FF000000</color>
+
+    <!-- "On" colour of the car session actions (artist radio). A static
+         VectorDrawable cannot read the Compose theme, so this mirrors the
+         default accent (ThemePreferences.accentColor #E03030). -->
+    <color name="car_action_active">#FFE03030</color>
 </resources>

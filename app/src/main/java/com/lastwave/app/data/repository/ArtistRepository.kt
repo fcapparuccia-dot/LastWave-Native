@@ -33,6 +33,9 @@ class ArtistRepository @Inject constructor(
     suspend fun getArtistDetails(
         artistName: String,
         browseId: String? = null,
+        /** Follow the Albums / Singles & EPs "more" pages for every release.
+         *  Off for Android Auto, which only needs the overview shelves. */
+        includeFullDiscography: Boolean = true,
         onLoaded: (ArtistPageData) -> Unit = {},
     ): ArtistPageData = withContext(Dispatchers.IO) {
         val cleanName = com.lastwave.app.util.ArtistHelper.primaryArtist(artistName).trim()
@@ -60,7 +63,7 @@ class ArtistRepository @Inject constructor(
             coroutineScope {
             // Load InnerTube artist data in parallel with Last.fm metadata
             val innerTubeDeferred = async {
-                runCatching { resolvedId?.let { innerTube.fetchArtistPage(it, artistNameFallback = cleanName, onLoaded = onLoaded, includeFullDiscography = true) } }.getOrNull()
+                runCatching { resolvedId?.let { innerTube.fetchArtistPage(it, artistNameFallback = cleanName, onLoaded = onLoaded, includeFullDiscography = includeFullDiscography) } }.getOrNull()
             }
 
             val lastFmDeferred = async {

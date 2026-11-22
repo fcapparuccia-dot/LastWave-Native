@@ -338,6 +338,9 @@ internal fun MusicPlaybackService.publishSystemState(state: MusicPlayerState) {
         updateMediaSessionVolumeRouting(state.isCasting, state.appVolume)
         publishSessionQueue(session, state)
         val isLiked = track != null && trackLikeController.isLiked(track)
+        // The radio button must repaint when the queue becomes (or stops
+        // being) an artist radio, so its state belongs in the signature.
+        val isArtistRadio = state.isArtistRadioQueue
         val signature = buildString {
             append(track?.title).append('|')
             append(track?.artist).append('|')
@@ -350,7 +353,8 @@ internal fun MusicPlaybackService.publishSystemState(state: MusicPlayerState) {
             append(state.appVolume).append('|')
             append(artworkUrl).append('|')
             append(artworkBitmap != null).append('|')
-            append(isLiked)
+            append(isLiked).append('|')
+            append(isArtistRadio)
             if (!state.isPlaying) append("|pos=").append(state.positionMs)
         }
         if (signature == systemStateSignature) return
@@ -426,7 +430,12 @@ internal fun MusicPlaybackService.publishSystemState(state: MusicPlayerState) {
                         if (track != null) {
                             addCustomAction(ACTION_LIKE, if (isLiked) "Unlike song" else "Like song",
                                 if (isLiked) R.drawable.ic_wave_widget_favorite_filled else R.drawable.ic_wave_widget_favorite)
-                            addCustomAction(ACTION_ARTIST_RADIO, "Artist radio", R.drawable.ic_car_artist_radio)
+                            addCustomAction(
+                                ACTION_ARTIST_RADIO,
+                                if (isArtistRadio) "Artist radio playing" else "Artist radio",
+                                if (isArtistRadio) R.drawable.ic_car_artist_radio_filled
+                                else R.drawable.ic_car_artist_radio,
+                            )
                             addCustomAction(ACTION_SHUFFLE, if (state.shuffleEnabled) "Turn shuffle off" else "Turn shuffle on",
                                 R.drawable.ic_widget_shuffle)
                         }

@@ -100,6 +100,15 @@ internal fun MusicPlaybackService.notifyChildrenChangedSafely(parentId: String) 
         runCatching { notifyChildrenChanged(parentId) }
     }
 
+/**
+ * A favorite row is browsed, not played: the page it keeps showing has the
+ * flipped heart already, and the favorites node gained or lost an entry.
+ */
+internal fun MusicPlaybackService.refreshCarFavorites(actionMediaId: String) {
+        notifyChildrenChangedSafely(AndroidAutoMediaLibrary.FAVORITES_ID)
+        androidAutoLibrary.favoriteActionParentId(actionMediaId)?.let { notifyChildrenChangedSafely(it) }
+    }
+
 
 internal fun MusicPlaybackService.isAllowedMediaClient(clientPackageName: String, clientUid: Int): Boolean = runCatching {
         // System_server sometimes proxies browse connections (notably some
@@ -163,10 +172,6 @@ internal fun MusicPlaybackService.playCarMediaId(mediaId: String) {
             }.onFailure { error ->
                 android.util.Log.w("MusicPlaybackService", "Android Auto playback request failed", error)
             }.getOrDefault(false)
-            if (played && mediaId.startsWith(AndroidAutoMediaLibrary.FAVORITE_ACTION_PREFIX)) {
-                notifyCarLibraryChanged(AndroidAutoMediaLibrary.FAVORITES_ID)
-                androidAutoLibrary.favoriteActionParentId(mediaId)?.let { notifyChildrenChangedSafely(it) }
-            }
             if (!played) publishCarPlaybackError("That item is no longer available")
         }
     }

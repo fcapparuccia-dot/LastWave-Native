@@ -8,12 +8,16 @@ import com.lastwave.app.data.generate.GeneratedTrack
 import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
+import com.lastwave.app.data.local.db.SongPlayStatsEntity
 import com.lastwave.app.data.model.AlbumPageData
+import com.lastwave.app.data.model.ArtistAlbumItem
+import com.lastwave.app.data.model.ArtistPageData
 import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodsRepository
 import com.lastwave.app.data.music.NewReleaseCard
 import com.lastwave.app.data.music.NewReleasesCollections
 import com.lastwave.app.data.music.YouTubePlaylistResult
+import com.lastwave.app.data.music.YouTubePlaylistSummary
 import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
@@ -35,6 +39,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -144,11 +149,38 @@ class AndroidAutoMediaLibrarySearchTest {
         val albumChildren = library.loadChildren(albumFolder[0].description.mediaId!!, MusicPlayerState())
         val saveAction = albumChildren.first()
         assertEquals("♡ Save to favorites", saveAction.description.title.toString())
+        // The heart is browsed, not played: a play request would leave the page.
+        assertTrue(saveAction.isBrowsable)
+        assertFalse(saveAction.isPlayable)
+        assertEquals(
+            listOf("Riproduzione casuale", "Album song", "Album song 2"),
+            albumChildren.drop(1).map { it.description.title.toString() },
+        )
 
-        assertTrue(library.playMediaId(saveAction.description.mediaId!!, mockk(relaxed = true)))
+        val toggled = library.loadChildren(saveAction.description.mediaId!!, MusicPlayerState())
         assertTrue(favorites.contains("album", "MPRE123"))
+        assertEquals("♥ Remove from favorites", toggled.first().description.title.toString())
+        assertEquals(
+            albumChildren.drop(1).map { it.description.mediaId },
+            toggled.drop(1).map { it.description.mediaId },
+        )
+        // Browsing the same node again re-applies the same verb instead of flipping back.
+        library.loadChildren(saveAction.description.mediaId!!, MusicPlayerState())
+        assertTrue(favorites.contains("album", "MPRE123"))
+
         val refreshedChildren = library.loadChildren(albumFolder[0].description.mediaId!!, MusicPlayerState())
         assertEquals("♥ Remove from favorites", refreshedChildren.first().description.title.toString())
+
+        val shufflePlayer = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(albumChildren[1].description.mediaId!!, shufflePlayer))
+        verify {
+            shufflePlayer.playQueue(
+                match { tracks -> tracks.map { it.title } == listOf("Album song", "Album song 2") },
+                startIndex = 0,
+                sourceLabel = "Album",
+                startShuffled = true,
+            )
+        }
         val root = library.loadChildren(AndroidAutoMediaLibrary.ROOT_ID, MusicPlayerState())
         assertEquals(
             listOf("Home", "Recenti", "Sfoglia", "Libreria"),
@@ -220,10 +252,13 @@ class AndroidAutoMediaLibrarySearchTest {
         assertEquals(listOf("Fresh single"), singles.map { it.description.title.toString() })
 
         val tracks = library.loadChildren(singles[0].description.mediaId!!, MusicPlayerState())
-        assertEquals(listOf("Single cut", "Single b-side"), tracks.map { it.description.title.toString() })
+        assertEquals(
+            listOf("Riproduzione casuale", "Single cut", "Single b-side"),
+            tracks.map { it.description.title.toString() },
+        )
 
         val player = mockk<MusicPlayer>(relaxed = true)
-        assertTrue(library.playMediaId(tracks[1].description.mediaId!!, player))
+        assertTrue(library.playMediaId(tracks[2].description.mediaId!!, player))
         verify { player.playQueue(any(), startIndex = 1, sourceLabel = "Fresh single") }
     }
 
@@ -297,6 +332,183 @@ class AndroidAutoMediaLibrarySearchTest {
             )
         }
         assertEquals("Country: United States", library.loadChildren(AndroidAutoMediaLibrary.CHARTS_ID, MusicPlayerState()).first().description.title.toString())
+    }
+
+    @Test
+    fun artistPageOffersPopularSongsAlbumsSinglesAndPlaylists() = runBlocking {
+        val innerTube = mockk<InnerTubeMusicApi>(relaxed = true)
+        val statsRepository = mockk<SongPlayStatsRepository>()
+        coEvery { statsRepository.mostPlayedSince(days = 90, limit = 200) } returns listOf(
+            SongPlayStatsEntity(
+                trackKey = "song|artist",
+                title = "Song",
+                artist = "Artist",
+                videoId = "seed",
+                totalPlayTimeMs = 10_000L,
+                lastPlayedAtMillis = 5L,
+            ),
+        )
+        val artistRepository = mockk<ArtistRepository>()
+        coEvery {
+            artistRepository.getArtistDetails(
+                "Artist",
+                browseId = null,
+                onLoaded = any(),
+                includeFullDiscography = false,
+            )
+        } returns ArtistPageData(
+            name = "Artist",
+            artworkUrl = "https://example.com/artist.jpg",
+            topSongs = listOf(
+                PlayableTrack(title = "Hit", artist = "Artist", videoId = "hit1"),
+                PlayableTrack(title = "Deep cut", artist = "Artist", videoId = "hit2"),
+            ),
+            albums = listOf(
+                ArtistAlbumItem(title = "Album One", browseId = "MPREalbum", year = "2020", type = "Album"),
+            ),
+            singles = listOf(
+                ArtistAlbumItem(title = "Single One", browseId = "MPREsingle", year = "2021", type = "Single"),
+                // Already listed under albums: the car shows each release once.
+                ArtistAlbumItem(title = "Album One", browseId = "MPREalbum", year = "2020", type = "Album"),
+            ),
+        )
+        coEvery { innerTube.searchPlaylists("Artist", 40) } returns listOf(
+            YouTubePlaylistSummary(id = "VLmix", title = "Artist Greatest", author = "Curator"),
+            YouTubePlaylistSummary(id = "VLother", title = "Unrelated mix", author = "Someone else"),
+        )
+        coEvery { innerTube.fetchAlbumPage("MPREalbum", "Album One", "Artist") } returns AlbumPageData(
+            title = "Album One",
+            artist = "Artist",
+            browseId = "MPREalbum",
+            tracks = listOf(
+                PlayableTrack(title = "Album track", artist = "Artist", videoId = "a1"),
+                PlayableTrack(title = "Album track 2", artist = "Artist", videoId = "a2"),
+            ),
+        )
+        coEvery { innerTube.fetchPlaylist("VLmix", maxTracks = 30) } returns YouTubePlaylistResult(
+            id = "VLmix",
+            title = "Artist Greatest",
+            trackCount = 1,
+            tracks = listOf(YouTubeMusicTrack(videoId = "p1", title = "Mix track", artist = "Artist")),
+        )
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = mockk(relaxed = true),
+            ytMusicLibraryManager = mockk(relaxed = true),
+            downloadedTrackDao = mockk(relaxed = true),
+            searchRepository = mockk(relaxed = true),
+            innerTube = innerTube,
+            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
+            artistRepository = artistRepository,
+            statsRepository = statsRepository,
+            moodsRepository = mockk(relaxed = true),
+            podcastRepository = mockk(relaxed = true),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
+            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
+        )
+        val artists = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ARTISTS_ID, MusicPlayerState())
+        assertEquals(listOf("Artist"), artists.map { it.description.title.toString() })
+        assertTrue(artists.single().isBrowsable)
+
+        val page = library.loadChildren(artists.single().description.mediaId!!, MusicPlayerState())
+        assertEquals(
+            listOf("Brani più popolari", "Album", "Singoli e EP", "Compilation e playlist", "Radio dell'artista"),
+            page.map { it.description.title.toString() },
+        )
+
+        val songs = library.loadChildren(page[0].description.mediaId!!, MusicPlayerState())
+        assertEquals(
+            listOf("Riproduzione casuale", "Hit", "Deep cut"),
+            songs.map { it.description.title.toString() },
+        )
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(songs[2].description.mediaId!!, player))
+        verify { player.playQueue(any(), startIndex = 1, sourceLabel = "Artist") }
+
+        val albums = library.loadChildren(page[1].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Album One"), albums.map { it.description.title.toString() })
+        val albumTracks = library.loadChildren(albums.single().description.mediaId!!, MusicPlayerState())
+        assertEquals(
+            listOf("Riproduzione casuale", "Album track", "Album track 2"),
+            albumTracks.map { it.description.title.toString() },
+        )
+        assertTrue(library.playMediaId(albumTracks[1].description.mediaId!!, player))
+        verify { player.playQueue(any(), startIndex = 0, sourceLabel = "Album One") }
+
+        // The album repeated in the singles shelf is not listed twice.
+        val singles = library.loadChildren(page[2].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Single One"), singles.map { it.description.title.toString() })
+
+        val playlists = library.loadChildren(page[3].description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Artist Greatest"), playlists.map { it.description.title.toString() })
+        val playlistTracks = library.loadChildren(playlists.single().description.mediaId!!, MusicPlayerState())
+        assertEquals(
+            listOf("Riproduzione casuale", "Mix track"),
+            playlistTracks.map { it.description.title.toString() },
+        )
+        assertTrue(library.playMediaId(playlistTracks[1].description.mediaId!!, player))
+        verify { player.playQueue(any(), startIndex = 0, sourceLabel = "Artist Greatest") }
+    }
+
+    @Test
+    fun savedPlaylistPageOffersShuffleAndTogglesTheFavoriteInPlace() = runBlocking {
+        val playlist = SavedPlaylist(
+            id = 7L,
+            title = "Road trip",
+            subtitle = "",
+            mode = "",
+            tracks = listOf(
+                GeneratedTrack(name = "One", artist = "Artist", durationMs = 1_000L),
+                GeneratedTrack(name = "Two", artist = "Artist", durationMs = 2_000L),
+            ),
+            createdAtMillis = 1L,
+        )
+        val playlistRepository = mockk<PlaylistRepository>(relaxed = true)
+        coEvery { playlistRepository.getById(7L) } returns playlist
+        val favorites = CarMediaFavorites(MemoryPreferences())
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = playlistRepository,
+            ytMusicLibraryManager = mockk(relaxed = true),
+            downloadedTrackDao = mockk<DownloadedTrackDao>(relaxed = true),
+            searchRepository = mockk(relaxed = true),
+            innerTube = mockk<InnerTubeMusicApi>(relaxed = true),
+            carMediaFavorites = favorites,
+            artistRepository = mockk<ArtistRepository>(relaxed = true),
+            statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
+            moodsRepository = mockk<MoodsRepository>(relaxed = true),
+            podcastRepository = mockk<PodcastRepository>(relaxed = true),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
+            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
+        )
+
+        val page = library.loadChildren("playlist:7", MusicPlayerState())
+        assertEquals(
+            listOf("♡ Save to favorites", "Riproduzione casuale", "One", "Two"),
+            page.map { it.description.title.toString() },
+        )
+
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(page[1].description.mediaId!!, player))
+        verify {
+            player.playQueue(
+                any(),
+                startIndex = 0,
+                sourceLabel = "Road trip",
+                startShuffled = true,
+                playlistId = 7L,
+            )
+        }
+
+        val toggled = library.loadChildren(page[0].description.mediaId!!, MusicPlayerState())
+        assertTrue(favorites.contains("saved_playlist", "7"))
+        assertEquals("♥ Remove from favorites", toggled.first().description.title.toString())
+        assertEquals(
+            page.drop(1).map { it.description.mediaId },
+            toggled.drop(1).map { it.description.mediaId },
+        )
     }
 
     private class MemoryPreferences : DataStore<Preferences> {

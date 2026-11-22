@@ -10,9 +10,9 @@ Auto **non sono ancora state eseguite**.
 
 - La ricerca Android Auto mostra prima le categorie disponibili: **Albums**,
   **Playlists**, **Radio**; poi mostra i risultati dei singoli brani.
-- Album e playlist aprono una pagina con i brani e l'azione
-  **♡ Save to favorites**. Se già salvati, l'azione diventa
-  **♥ Remove from favorites**.
+- Album e playlist aprono una pagina con i brani, l'azione
+  **Riproduzione casuale** e l'azione **♡ Save to favorites**. Se già salvati,
+  l'azione diventa **♥ Remove from favorites**.
 - I preferiti sono persistiti localmente in DataStore, separati per tipo e ID
   della raccolta. Il nodo **Favorites** appare nella libreria Android Auto
   quando contiene almeno un elemento; ciascun preferito apre i relativi brani.
@@ -21,9 +21,21 @@ Auto **non sono ancora state eseguite**.
 - La modifica/rimozione di un preferito notifica Android Auto per aggiornare le
   pagine interessate.
 
-L'azione di salvataggio è una voce selezionabile dentro l'album o la playlist,
-non un pulsante cuore accanto a ogni riga: la UI standard di Android Auto non
-espone controlli personalizzati per ciascun elemento sfogliabile.
+L'azione di salvataggio è una voce dentro l'album o la playlist, non un pulsante
+cuore accanto a ogni riga: la UI standard di Android Auto non espone controlli
+personalizzati per ciascun elemento sfogliabile.
+
+Quella voce non è riproducibile ma **sfogliabile**: Android Auto trasforma il tap
+su una riga riproducibile in una richiesta di riproduzione e porta alla schermata
+di riproduzione, per questo il cuore sembrava cambiare pagina. La riga apre un
+nodo `favorite-action:` che applica il salvataggio/rimozione e restituisce la
+stessa pagina con il cuore già aggiornato (le righe vengono riusate dalla cache
+`pageCache`), poi notifica il nodo **Preferiti** e la pagina di partenza.
+
+Sopra i brani, accanto al cuore, ogni pagina di playlist o album espone
+**Riproduzione casuale**: avvia l'intera raccolta con `playQueue(startShuffled =
+true)` — per le playlist salvate con il loro id, per le raccolte già in cache con
+il token dei brani.
 
 ## Layout a schede come Spotify
 
@@ -64,6 +76,26 @@ deduplica e la limita a 12 voci. Sfoglia e le pagine dei generi sono tenute in
 cache (una ora per l'elenco dei gruppi, LRU per generi e playlist) perché ogni
 accensione dell'auto riapre gli stessi nodi.
 
+## Pagina artista
+
+**Libreria → Artisti** non avvia più subito la radio: ogni artista apre una
+pagina con quattro sezioni e la radio come ultima riga.
+
+| Voce | Contenuto |
+|---|---|
+| **Brani più popolari** | i brani che YouTube Music ordina per popolarità, fino a 50, con l'etichetta dell'artista come sorgente della coda |
+| **Album** | le uscite della shelf Album → brani con `fetchAlbumPage` |
+| **Singoli e EP** | le uscite della shelf Singles & EPs, senza ripetere gli album già elencati |
+| **Compilation e playlist** | playlist restituite da `searchPlaylists` e filtrate sul nome dell'artista (titolo o autore) → brani con `fetchPlaylist` |
+| **Radio dell'artista** | azione che avvia la coda "‹artista› Radio" |
+
+La pagina è risolta una volta per sessione (LRU di 6 artisti) e l'overview
+dell'artista parte in parallelo alla ricerca delle playlist, con 15 secondi di
+budget complessivo: l'apertura costa un solo giro di rete e i nodi figli sono
+immediati. L'overview usa `getArtistDetails(includeFullDiscography = false)`,
+così non segue le pagine "more" dell'intera discografia. Se la rete non
+risponde la pagina mostra solo la radio, invece di restare vuota.
+
 ## Azione "Artist radio" in riproduzione
 
 `MusicPlaybackServiceSession` pubblica una custom action
@@ -74,6 +106,17 @@ dell'artista". Il servizio la gestisce in `MusicPlaybackServiceCar.kt`
 (lo stesso percorso della voce **Artisti** della Libreria) e mostra un errore
 di riproduzione se la radio non produce brani. L'azione resta sempre
 selezionabile: riavvia la radio dell'artista del brano corrente.
+
+Il pulsante si accende quando la radio è attiva: `ic_car_artist_radio` è la
+radio *outlined* bianca (spenta), `ic_car_artist_radio_filled` la radio piena
+nel colore `car_action_active` (accento). Lo stato "acceso" si deduce
+dall'etichetta della coda — `artistRadioLabel(artista)` in
+`playback/ArtistRadioQueue.kt` costruisce l'unica forma usata da tutti i
+percorsi ("‹artista› Radio") e `MusicPlayerState.isArtistRadioQueue` la
+riconosce — non dall'artista del brano corrente, che nella radio cambia
+canzone dopo canzone. L'etichetta entra anche nella firma di
+`publishSystemState`, così il MediaSession viene ripubblicato (e l'icona
+ridisegnata dall'host) appena la coda diventa una radio o smette di esserlo.
 
 
 
@@ -108,16 +151,25 @@ selezionabile: riavvia la radio dell'artista del brano corrente.
 1. Eseguire i test e compilare su un PC con JDK 17 e Android SDK configurati.
 2. Installare il nuovo APK sul telefono e verificare ricerca di album, playlist
    e artisti in Android Auto.
-3. Verificare su auto/host che le voci selezionabili **Save to favorites**,
+3. Verificare su auto/host che le voci **Save to favorites** /
    **Remove from favorites** e **Start radio** siano mostrate e attivino
-   l'azione prevista. L'interfaccia Android Auto può variare in base all'host.
+   l'azione prevista **senza lasciare la pagina** della playlist o dell'album.
+   Se l'host mostra ancora la vecchia riga riproducibile (albero in cache),
+   riconnettere Android Auto. L'interfaccia può variare in base all'host.
 4. Verificare che il nodo **Favorites** si aggiorni dopo salvataggio e
    rimozione, e che album e playlist salvati riaprano i brani corretti.
-5. Verificare che la radice mostri le quattro schede **Home**, **Recenti**,
+5. Verificare che la riga **Riproduzione casuale** compaia sopra i brani di
+   playlist e album e avvii l'intera raccolta in ordine casuale (icona shuffle
+   attiva nella sessione).
+6. Verificare che la radice mostri le quattro schede **Home**, **Recenti**,
    **Sfoglia**, **Libreria** e che le voci di ogni scheda aprano il livello
    atteso; che **Recenti** si popoli solo dopo aver avviato una playlist.
-6. Verificare che la custom action **Artist radio** compaia in riproduzione e
+7. Verificare che la custom action **Artist radio** compaia in riproduzione e
    avvii una coda "‹artista› Radio" senza toccare il cuore.
+8. Verificare che in **Libreria → Artisti** ogni artista apra la pagina con
+   **Brani più popolari**, **Album**, **Singoli e EP**, **Compilation e
+   playlist** e **Radio dell'artista**, e che le righe dei brani avviino la
+   coda con l'etichetta dell'artista, dell'album o della playlist.
 
 I test non sono stati eseguiti: su questo PC `java`/`javac`, Android Studio,
 Android SDK e `adb` non risultavano disponibili. L'installazione di Temurin JDK

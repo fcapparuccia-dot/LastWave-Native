@@ -113,6 +113,7 @@ internal data class CleanTrackMetadata(val title: String, val artist: String)
 internal fun sameServiceState(previous: MusicPlayerState, current: MusicPlayerState): Boolean =
     previous.current == current.current &&
         previous.queue == current.queue &&
+        previous.sourceLabel == current.sourceLabel &&
         previous.currentIndex == current.currentIndex &&
         previous.isPlaying == current.isPlaying &&
         previous.isBuffering == current.isBuffering &&
@@ -446,6 +447,9 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
             }.onFailure { error ->
                 android.util.Log.w("MusicPlaybackService", "Android Auto browse failed for $parentId", error)
             }.getOrDefault(emptyList())
+            if (parentId.startsWith(AndroidAutoMediaLibrary.FAVORITE_ACTION_PREFIX)) {
+                refreshCarFavorites(parentId)
+            }
             result.sendResult(children)
         }
     }
