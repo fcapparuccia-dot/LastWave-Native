@@ -96,6 +96,42 @@ immediati. L'overview usa `getArtistDetails(includeFullDiscography = false)`,
 così non segue le pagine "more" dell'intera discografia. Se la rete non
 risponde la pagina mostra solo la radio, invece di restare vuota.
 
+## Preferiti su ogni raccolta
+
+Il cuore non è più solo nelle pagine aperte dalla ricerca o dalle playlist
+salvate: ogni pagina che nomina un intero album o un'intera playlist parte con
+la stessa riga **♡ Save to favorites** / **♥ Remove from favorites** sopra
+**Riproduzione casuale** e i brani. Sono coperte le uscite dell'artista
+(**Album**, **Singoli e EP** → `artist-album:` / `artist-single:`), le
+**Compilation e playlist** dell'artista (`artist-playlist:`), le playlist di un
+genere in **Sfoglia** (`browse:playlist:`) e le uscite di **Nuove uscite**
+(`new-release-album:` / `new-release-playlist:`).
+
+Il tap salva la raccolta con lo stesso tipo della ricerca — `album` per album e
+singoli, `playlist` per playlist e compilation — quindi le voci compaiono in
+**Album salvati**, nel nodo **Preferiti** e nella scheda **Home**, e si aprono
+con i loro brani. La voce da salvare è ricostruita dal nodo di partenza
+(`favoriteFor` → `artistReleaseFavorite` / `artistPlaylistFavorite` /
+`browsePlaylistFavorite` / `newReleaseFavorite`) dalle stesse cache che hanno
+costruito la pagina: il salvataggio non costa una chiamata di rete e non può
+salvare un'altra raccolta. Dopo il tap il servizio notifica **Preferiti**,
+**Album salvati**, **Libreria**, **Home** e la pagina di partenza, così il cuore
+è già rosso e le liste si aggiornano.
+
+## Riga Home
+
+Android Auto mostra le schede dell'app (Home, Recenti, Sfoglia, Libreria) solo
+alla radice: dentro un sottomenu resta la freccia indietro, un livello per tap.
+Per questo `loadCarChildren` antepone a **ogni** pagina tranne la radice e la
+Home una riga **Home** (`category:home`, sfogliabile) che riapre la scheda Home
+con un tap. La riga non compare nelle liste telefono che riusano lo stesso
+albero (`loadChildren`, usato dalla scheda musicale OriginOS).
+
+La schermata di riproduzione dell'auto non è pilotabile dall'app: una custom
+action della sessione non può cambiare la pagina sfogliata dall'host, quindi il
+ritorno veloce alla Home è questa riga, raggiungibile con la freccia che
+riporta alla pagina di partenza.
+
 ## Azione "Artist radio" in riproduzione
 
 `MusicPlaybackServiceSession` pubblica una custom action
@@ -170,6 +206,14 @@ ridisegnata dall'host) appena la coda diventa una radio o smette di esserlo.
    **Brani più popolari**, **Album**, **Singoli e EP**, **Compilation e
    playlist** e **Radio dell'artista**, e che le righe dei brani avviino la
    coda con l'etichetta dell'artista, dell'album o della playlist.
+9. Aprire un album e una compilation da **Libreria → Artisti** e verificare che
+   la prima riga sia **♡ Save to favorites**, che il tap la trasformi in
+   **♥ Remove from favorites** senza lasciare la pagina, e che la raccolta
+   compaia in **Album salvati** / **Preferiti** e si riapra con i suoi brani.
+10. Verificare che ogni pagina dei sottomenu (Libreria, Artisti, album,
+    compilation, Sfoglia, Nuove uscite, coda **In riproduzione**) parta con la
+    riga **Home** e che il tap riporti alla scheda Home, e che nelle liste della
+    scheda musicale OriginOS la riga Home non compaia.
 
 I test non sono stati eseguiti: su questo PC `java`/`javac`, Android Studio,
 Android SDK e `adb` non risultavano disponibili. L'installazione di Temurin JDK

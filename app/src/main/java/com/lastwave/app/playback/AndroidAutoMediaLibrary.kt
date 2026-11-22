@@ -17,6 +17,7 @@ import com.lastwave.app.data.music.InnerTubeMusicApi
 import com.lastwave.app.data.music.MoodGroup
 import com.lastwave.app.data.music.MoodTile
 import com.lastwave.app.data.music.MoodsRepository
+import com.lastwave.app.data.music.NewReleaseCard
 import com.lastwave.app.data.music.NewReleasesCollections
 import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.music.YouTubePlaylistSummary
@@ -158,6 +159,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         )
     val downloadChanges get() = downloadedTrackDao.getAll()
 
+    /** Rows of one node. [loadCarChildren] adds the car-only Home row on top. */
     suspend fun loadChildren(parentId: String, state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> {
         val children = when {
             parentId == ROOT_ID -> rootItems()
@@ -179,9 +181,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
             parentId.startsWith(ARTIST_PLAYLISTS_PREFIX) ->
                 artistPlaylistItems(parentId.removePrefix(ARTIST_PLAYLISTS_PREFIX))
             parentId.startsWith(ARTIST_ALBUM_PREFIX) ->
-                artistReleaseChildren(parentId, ARTIST_ALBUM_PREFIX, singles = false)
+                artistReleaseChildren(parentId, ARTIST_ALBUM_PREFIX)
             parentId.startsWith(ARTIST_SINGLE_PREFIX) ->
-                artistReleaseChildren(parentId, ARTIST_SINGLE_PREFIX, singles = true)
+                artistReleaseChildren(parentId, ARTIST_SINGLE_PREFIX)
             parentId.startsWith(ARTIST_PLAYLIST_PREFIX) -> artistPlaylistChildren(parentId)
             parentId == LIBRARY_PODCASTS_ID -> podcastShowItems()
             parentId.startsWith(PODCAST_SHOW_PREFIX) -> podcastShowChildren(parentId)
@@ -259,6 +261,20 @@ class AndroidAutoMediaLibrary @Inject constructor(
         // The rows a favorite action flips when it is browsed (see favoriteActionItem).
         synchronized(pageCache) { pageCache[parentId] = children }
         return children
+    }
+
+    /**
+     * The page Android Auto shows for [parentId]: the rows plus a Home row.
+     * The car draws the app's tabs only at the root, so without it leaving a
+     * submenu means walking the back stack one level per tap.
+     */
+    suspend fun loadCarChildren(
+        parentId: String,
+        state: MusicPlayerState,
+    ): List<MediaBrowserCompat.MediaItem> {
+        val children = loadChildren(parentId, state)
+        return if (parentId == ROOT_ID || parentId == HOME_ID) children
+        else listOf(homeRow()) + children
     }
 
     suspend fun search(query: String): List<MediaBrowserCompat.MediaItem> {
@@ -502,25 +518,15 @@ class AndroidAutoMediaLibrary @Inject constructor(
         item: SearchResultItem,
         tracks: List<PlayableTrack>,
     ): List<MediaBrowserCompat.MediaItem> {
-        val entityId = item.entityId?.takeIf(String::isNotBlank) ?: return emptyList()
+        item.entityId?.takeIf(String::isNotBlank) ?: return emptyList()
         val parentId = if (type == "album") "$SEARCH_ALBUM_PREFIX$token:$index"
         else "$SEARCH_PLAYLIST_PREFIX$token:$index"
-        val trackToken = cacheTracks(tracks)
-        return buildList {
-            add(
-                favoriteActionItem(
-                    type = type,
-                    entityId = entityId,
-                    parentId = parentId,
-                    collectionTitle = item.name,
-                    isSaved = carMediaFavorites.contains(type, entityId),
-                ),
-            )
-            add(shuffleItem(item.name, trackToken))
-            tracks.forEachIndexed { trackIndex, track ->
-                add(playableItem("$SEARCH_PREFIX$trackToken:$trackIndex", track))
-            }
-        }
+        return collectionRows(
+            parentId = parentId,
+            favorite = item.toCarMediaFavorite(type),
+            label = item.name,
+            tracks = tracks,
+        )
     }
 
     private suspend fun savedPlaylistChildren(playlist: SavedPlaylist): List<MediaBrowserCompat.MediaItem> {
@@ -566,22 +572,12 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 .map { it.toPlayableTrack() }
             else -> emptyList()
         }
-        val trackToken = cacheTracks(tracks)
-        return buildList {
-            add(
-                favoriteActionItem(
-                    type = type,
-                    entityId = entityId,
-                    parentId = parentId,
-                    collectionTitle = favorite.title,
-                    isSaved = true,
-                ),
-            )
-            add(shuffleItem(favorite.title, trackToken))
-            tracks.forEachIndexed { index, track ->
-                add(playableItem("$SEARCH_PREFIX$trackToken:$index", track))
-            }
-        }
+        return collectionRows(
+            parentId = parentId,
+            favorite = favorite,
+            label = favorite.title,
+            tracks = tracks,
+        )
     }
 
     /**
@@ -645,8 +641,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         type: String,
         entityId: String,
         parentId: String,
-    ): CarMediaFavorite? = when (type) {
-        SAVED_PLAYLIST_FAVORITE_TYPE -> entityId.toLongOrNull()
+    ): CarMediaFavorite? = when {
+        type == SAVED_PLAYLIST_FAVORITE_TYPE -> entityId.toLongOrNull()
             ?.let { resolvePlaylistWithTracks(it) }
             ?.let { playlist ->
                 CarMediaFavorite(
@@ -657,7 +653,15 @@ class AndroidAutoMediaLibrary @Inject constructor(
                     artworkUrl = playlist.coverUri(),
                 )
             }
-        "album", "playlist" -> {
+        // A collection opened from a car page resolves the same entry its
+        // favorite row was built from, so saving never needs the network.
+        parentId.startsWith(ARTIST_SINGLE_PREFIX) -> artistReleaseFavorite(parentId, ARTIST_SINGLE_PREFIX)
+        parentId.startsWith(ARTIST_ALBUM_PREFIX) -> artistReleaseFavorite(parentId, ARTIST_ALBUM_PREFIX)
+        parentId.startsWith(ARTIST_PLAYLIST_PREFIX) -> artistPlaylistFavorite(parentId)
+        parentId.startsWith(BROWSE_PLAYLIST_PREFIX) -> browsePlaylistFavorite(parentId)
+        parentId.startsWith(NEW_RELEASE_PLAYLIST_PREFIX) -> newReleaseFavorite(parentId, isPlaylist = true)
+        parentId.startsWith(NEW_RELEASE_ALBUM_PREFIX) -> newReleaseFavorite(parentId, isPlaylist = false)
+        type == "album" || type == "playlist" -> {
             val prefix = if (type == "album") SEARCH_ALBUM_PREFIX else SEARCH_PLAYLIST_PREFIX
             parseSearchCollectionId(parentId, prefix)
                 ?.let { (token, index) ->
@@ -706,6 +710,13 @@ class AndroidAutoMediaLibrary @Inject constructor(
             .build(),
         if (browsable) MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
         else MediaBrowserCompat.MediaItem.FLAG_PLAYABLE,
+    )
+
+    /** One tap from any page back to the Home tab of the car's root. */
+    private fun homeRow() = browsableItem(
+        mediaId = HOME_ID,
+        title = "Home",
+        subtitle = "Torna alla home",
     )
 
     private fun cacheTracks(tracks: List<PlayableTrack>): String {
@@ -1056,14 +1067,24 @@ class AndroidAutoMediaLibrary @Inject constructor(
         val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
             innerTube.fetchPlaylist(summary.id, maxTracks = MAX_SEARCH_RESULTS)
         }?.tracks.orEmpty().map { it.toPlayableTrack(summary.author, summary.title) }
-        if (tracks.isEmpty()) return emptyList()
-        val queueToken = cacheTracks(tracks)
-        return buildList {
-            add(shuffleItem(summary.title, queueToken))
-            tracks.forEachIndexed { trackIndex, track ->
-                add(playableItem("$SEARCH_PREFIX$queueToken:$trackIndex", track))
-            }
-        }
+        return collectionRows(
+            parentId = parentId,
+            favorite = summary.toCarMediaFavorite(),
+            label = summary.title,
+            tracks = tracks,
+        )
+    }
+
+    /** The playlist a genre tile names: "browse:playlist:<group>:<tile>:<index>". */
+    private suspend fun browsePlaylistFavorite(parentId: String): CarMediaFavorite? {
+        val rest = parentId.removePrefix(BROWSE_PLAYLIST_PREFIX)
+        val separator = rest.lastIndexOf(':')
+        if (separator <= 0) return null
+        val index = rest.substring(separator + 1).toIntOrNull() ?: return null
+        val summary = synchronized(browseCategories) {
+            browseCategories[rest.substring(0, separator)]?.getOrNull(index)
+        } ?: return null
+        return summary.toCarMediaFavorite()
     }
 
     /** Genre/mood page of the browse tab, fetched once per car session. */
@@ -1298,21 +1319,46 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private suspend fun artistReleaseChildren(
         parentId: String,
         prefix: String,
-        singles: Boolean,
     ): List<MediaBrowserCompat.MediaItem> {
+        val favorite = artistReleaseFavorite(parentId, prefix) ?: return emptyList()
+        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+            innerTube.fetchAlbumPage(favorite.entityId, favorite.title, favorite.artist.orEmpty())?.tracks
+        }.orEmpty()
+        return collectionRows(
+            parentId = parentId,
+            favorite = favorite,
+            label = favorite.title,
+            tracks = tracks,
+            trackMediaId = artistTrackId(favorite.title),
+        )
+    }
+
+    /**
+     * The album or single a release node names, typed as an album favorite so
+     * saving it from the artist lands in "Album salvati" like one saved from
+     * search.
+     */
+    private suspend fun artistReleaseFavorite(parentId: String, prefix: String): CarMediaFavorite? {
         // The token is "<base64 artist>:<release index>", so the index is last.
         val rest = parentId.removePrefix(prefix)
         val separator = rest.lastIndexOf(':')
-        if (separator <= 0) return emptyList()
+        if (separator <= 0) return null
         val page = decodeEntityId(rest.substring(0, separator))?.let { artistPage(it) }
-            ?: return emptyList()
-        val index = rest.substring(separator + 1).toIntOrNull() ?: return emptyList()
+            ?: return null
+        val index = rest.substring(separator + 1).toIntOrNull() ?: return null
+        val singles = prefix == ARTIST_SINGLE_PREFIX
         val release = (if (singles) page.singles else page.albums).getOrNull(index)
-            ?: return emptyList()
-        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
-            innerTube.fetchAlbumPage(release.browseId, release.title, page.name)?.tracks
-        }.orEmpty()
-        return cachedArtistTrackItems(tracks, release.title)
+            ?: return null
+        if (release.browseId.isBlank()) return null
+        return CarMediaFavorite(
+            type = "album",
+            entityId = release.browseId,
+            title = release.title,
+            subtitle = listOfNotNull(if (singles) "Singolo" else "Album", release.year)
+                .joinToString(" • "),
+            artist = page.name,
+            artworkUrl = release.artworkUrl,
+        )
     }
 
     private suspend fun artistPlaylistItems(encodedName: String): List<MediaBrowserCompat.MediaItem> {
@@ -1328,18 +1374,38 @@ class AndroidAutoMediaLibrary @Inject constructor(
     }
 
     private suspend fun artistPlaylistChildren(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val favorite = artistPlaylistFavorite(parentId) ?: return emptyList()
+        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
+            innerTube.fetchPlaylist(favorite.entityId, maxTracks = MAX_SEARCH_RESULTS)
+        }?.tracks.orEmpty().map { it.toPlayableTrack(favorite.artist, favorite.title) }
+        return collectionRows(
+            parentId = parentId,
+            favorite = favorite,
+            label = favorite.title,
+            tracks = tracks,
+            trackMediaId = artistTrackId(favorite.title),
+        )
+    }
+
+    /** The compilation or mix a "Compilation e playlist" node names. */
+    private suspend fun artistPlaylistFavorite(parentId: String): CarMediaFavorite? {
         val rest = parentId.removePrefix(ARTIST_PLAYLIST_PREFIX)
         val separator = rest.lastIndexOf(':')
-        if (separator <= 0) return emptyList()
+        if (separator <= 0) return null
         val page = decodeEntityId(rest.substring(0, separator))?.let { artistPage(it) }
-            ?: return emptyList()
-        val index = rest.substring(separator + 1).toIntOrNull() ?: return emptyList()
-        val playlist = page.playlists.getOrNull(index) ?: return emptyList()
-        val tracks = bounded(SEARCH_DETAIL_NETWORK_BUDGET_MS) {
-            innerTube.fetchPlaylist(playlist.id, maxTracks = MAX_SEARCH_RESULTS)
-        }?.tracks.orEmpty().map { it.toPlayableTrack(playlist.author, playlist.title) }
-        return cachedArtistTrackItems(tracks, playlist.title)
+            ?: return null
+        val index = rest.substring(separator + 1).toIntOrNull() ?: return null
+        return page.playlists.getOrNull(index)?.toCarMediaFavorite()
     }
+
+    private fun YouTubePlaylistSummary.toCarMediaFavorite() = CarMediaFavorite(
+        type = "playlist",
+        entityId = id,
+        title = title,
+        subtitle = author?.takeIf(String::isNotBlank) ?: trackCountText,
+        artist = author,
+        artworkUrl = artworkUrl,
+    )
 
     /** Rows backed by a cached queue: the media id carries the queue label, so
      *  the car shows the artist or release name instead of a generic source. */
@@ -1349,11 +1415,47 @@ class AndroidAutoMediaLibrary @Inject constructor(
     ): List<MediaBrowserCompat.MediaItem> {
         if (tracks.isEmpty()) return emptyList()
         val token = cacheTracks(tracks)
-        val encodedLabel = encodeEntityId(label)
+        val mediaId = artistTrackId(label)
         return buildList {
             add(shuffleItem(label, token))
-            tracks.forEachIndexed { index, track ->
-                add(playableItem("$ARTIST_TRACK_PREFIX$encodedLabel:$token:$index", track))
+            tracks.forEachIndexed { index, track -> add(playableItem(mediaId(token, index), track)) }
+        }
+    }
+
+    /** Rows of an artist collection name it, so the car's queue shows where it came from. */
+    private fun artistTrackId(label: String): (token: String, index: Int) -> String {
+        val encodedLabel = encodeEntityId(label)
+        return { token, index -> "$ARTIST_TRACK_PREFIX$encodedLabel:$token:$index" }
+    }
+
+    /**
+     * A collection page: the favorite row, "Riproduzione casuale" and the
+     * tracks. Every page that names a whole album or playlist goes through
+     * here, so the whole collection can be saved from wherever it was opened.
+     */
+    private suspend fun collectionRows(
+        parentId: String,
+        favorite: CarMediaFavorite?,
+        label: String,
+        tracks: List<PlayableTrack>,
+        trackMediaId: (token: String, index: Int) -> String = { token, index -> "$SEARCH_PREFIX$token:$index" },
+    ): List<MediaBrowserCompat.MediaItem> {
+        val token = tracks.takeIf { it.isNotEmpty() }?.let(::cacheTracks)
+        return buildList {
+            if (favorite != null) {
+                add(
+                    favoriteActionItem(
+                        type = favorite.type,
+                        entityId = favorite.entityId,
+                        parentId = parentId,
+                        collectionTitle = favorite.title,
+                        isSaved = carMediaFavorites.contains(favorite.type, favorite.entityId),
+                    ),
+                )
+            }
+            if (token != null) {
+                add(shuffleItem(label, token))
+                tracks.forEachIndexed { index, track -> add(playableItem(trackMediaId(token, index), track)) }
             }
         }
     }
@@ -1599,16 +1701,33 @@ class AndroidAutoMediaLibrary @Inject constructor(
             }
         }.orEmpty()
         if (tracks.isEmpty()) return emptyList()
-        val token = cacheTracks(tracks)
         val queueLabel = card?.title ?: tracks.first().album?.takeIf(String::isNotBlank) ?: "Nuove uscite"
-        val label = encodeEntityId(queueLabel)
-        return buildList {
-            add(shuffleItem(queueLabel, token))
-            tracks.forEachIndexed { index, track ->
-                add(playableItem("$NEW_RELEASE_TRACK_PREFIX$label:$token:$index", track))
-            }
-        }
+        val encodedLabel = encodeEntityId(queueLabel)
+        return collectionRows(
+            parentId = parentId,
+            favorite = card?.let { newReleaseFavorite(it, isPlaylist) },
+            label = queueLabel,
+            tracks = tracks,
+            trackMediaId = { token, index -> "$NEW_RELEASE_TRACK_PREFIX$encodedLabel:$token:$index" },
+        )
     }
+
+    /** The release a "Nuove uscite" page opens: "new-release-album:<browseId>". */
+    private suspend fun newReleaseFavorite(parentId: String, isPlaylist: Boolean): CarMediaFavorite? {
+        val prefix = if (isPlaylist) NEW_RELEASE_PLAYLIST_PREFIX else NEW_RELEASE_ALBUM_PREFIX
+        val browseId = parentId.removePrefix(prefix).takeIf(String::isNotBlank) ?: return null
+        val card = newReleases().all.firstOrNull { it.browseId == browseId } ?: return null
+        return newReleaseFavorite(card, isPlaylist)
+    }
+
+    private fun newReleaseFavorite(card: NewReleaseCard, isPlaylist: Boolean) = CarMediaFavorite(
+        type = if (isPlaylist) "playlist" else "album",
+        entityId = card.browseId,
+        title = card.title,
+        subtitle = card.subtitle,
+        artist = card.subtitle,
+        artworkUrl = card.artworkUrl,
+    )
 
     private fun playNewReleaseTrack(mediaId: String, player: MusicPlayer): Boolean =
         playCachedQueueTrack(mediaId, NEW_RELEASE_TRACK_PREFIX, "Nuove uscite", player)

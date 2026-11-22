@@ -106,6 +106,11 @@ internal fun MusicPlaybackService.notifyChildrenChangedSafely(parentId: String) 
  */
 internal fun MusicPlaybackService.refreshCarFavorites(actionMediaId: String) {
         notifyChildrenChangedSafely(AndroidAutoMediaLibrary.FAVORITES_ID)
+        // The same tap also moves the saved albums row, the library's album
+        // count and Home's "Preferiti" node (it appears on the first save).
+        notifyChildrenChangedSafely(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID)
+        notifyChildrenChangedSafely(AndroidAutoMediaLibrary.LIBRARY_ID)
+        notifyChildrenChangedSafely(AndroidAutoMediaLibrary.HOME_ID)
         androidAutoLibrary.favoriteActionParentId(actionMediaId)?.let { notifyChildrenChangedSafely(it) }
     }
 
