@@ -81,6 +81,7 @@ Decide what kind of request it is and answer in that shape. Do not mix them.
 |---|---|
 | **Bug / crash / log** ("X fails", a diagnostics file, a stack trace) | Root cause from evidence, then the smallest correct fix. Never fix a guess as if it were proven. |
 | **Feature** ("add X", "make it like Y") | The behaviour asked for, in the existing patterns, nothing extra. |
+| **Build / install the APK** ("fai l'apk", "aggiorna il telefono") | Follow [docs/DEBUG_APK_CI_INSTALL.md](docs/DEBUG_APK_CI_INSTALL.md) step by step. Do not improvise the signing or the download. |
 | **Refactor / cleanup** ("remove spaghetti") | Same behaviour, less code. Behaviour changes are bugs here. |
 | **Design / UI** | Follow [DESIGN.md](DESIGN.md). |
 | **Question** ("why", "is it like X") | An answer. No code changes unless asked. |
@@ -167,3 +168,24 @@ Find the evidence in the log before writing a fix, and quote it in the summary.
 
 Lead with what changed and why, tied to the evidence. Then what is still
 unverified or out of scope. No filler, no restating the request.
+
+## 7. Debug APK: build in CI, install on the phone
+
+Follow [docs/DEBUG_APK_CI_INSTALL.md](docs/DEBUG_APK_CI_INSTALL.md) verbatim — it
+has the exact commands and the verified run. The non-negotiables:
+
+- `build-debug-apk.yml` is **`workflow_dispatch` only**: a push does not build.
+  Dispatch it through the GitHub API (token from `git credential fill`, never
+  printed) or the Actions UI, on `main`, after the commit is pushed.
+- The job signs with `%USERPROFILE%\.android\debug.keystore`, taken from the
+  `DEBUG_KEYSTORE_BASE64` repository secret, so the artifact installs **over**
+  the phone's build with `adb install -r` and keeps its data. The job fails
+  instead of publishing an APK signed by another key.
+- Download the artifact in two hops: `archive_download_url` with the token →
+  `302` → the signed Azure blob URL **without** the token. The APK is ~144 MB
+  inside a ~51 MB zip; `SIGNER.txt` must show the same SHA-256 twice.
+- Verify after installing: `dumpsys package` (`versionName`, `signatures`,
+  `ceDataInode` unchanged), `pidof`, `logcat -b crash` free of new FATAL.
+- **Never** `adb uninstall` without the user's explicit consent: it wipes the
+  debug app's data (settings, stats, downloads, local playlists).
+
