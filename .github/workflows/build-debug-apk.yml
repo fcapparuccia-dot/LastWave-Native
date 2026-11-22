@@ -5,17 +5,16 @@ name: Build LastWave Debug APK
 # release variant with the runner's debug key (that APK would install once, then
 # break every update with INSTALL_FAILED_UPDATE_INCOMPATIBLE). This checkout has
 # no such secrets, so this job builds the debug variant instead - signed with the
-# runner's debug key and, with the applicationId override, installable next to a
-# release app already on the phone.
+# developer machine's debug key from DEBUG_KEYSTORE_BASE64 and, with the
+# applicationId override, installable next to a release app already on the phone.
 #
-# The debug keystore below is cached, so every run of this job signs with the
-# same key. A fresh key per run would make each new APK uninstallable over the
-# previous run's install (INSTALL_FAILED_UPDATE_INCOMPATIBLE, which OEM
-# installers word as "package conflicts with an existing package on the
-# device"). It is still not the local %USERPROFILE%\.android\debug.keystore, so
-# the first CI APK needs one `adb uninstall com.lastwave.app.debug`. AGP 9 signs
-# the debug variant with a keystore of its own, so the staging step re-signs the
-# APK with this cached key.
+# The job signs with the same debug keystore as the developer machine, taken
+# base64-encoded from the DEBUG_KEYSTORE_BASE64 repository secret. Signed with
+# another key the APK installs only after an uninstall, and the uninstall wipes
+# the app data (INSTALL_FAILED_UPDATE_INCOMPATIBLE, which OEM installers word as
+# "package conflicts with an existing package on the device"). AGP 9 signs the
+# debug variant with a keystore of its own, so the staging step re-signs the APK
+# with this key and fails when the signer does not match it.
 #
 # Manual on purpose: it must not race the release job on every push.
 on:
@@ -42,29 +41,23 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # AGP generates ~/.android/debug.keystore on the runner when it is missing,
-      # so without this cache every run signs with a different key and the APK
-      # cannot update the previous run's install.
-      - name: Restore the debug signing key
-        id: debug_keystore
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.android/debug.keystore
-          key: lastwave-ci-debug-keystore-v1
-
-      # actions/cache only saves a path that still exists at the end of the job,
-      # and the first run of this job ended with "Path Validation Error: Path(s)
-      # ... do(es) not exist, hence no cache is being saved" - so the miss would
-      # never turn into a hit. Create the file here, with the alias and passwords
-      # AGP itself uses, so a restored key and a generated key are interchangeable.
-      - name: Create the debug signing key on a cache miss
-        if: steps.debug_keystore.outputs.cache-hit != 'true'
+      # The key must be the one the phone already trusts, so it comes from the
+      # repository secret rather than from a per-runner cache or a generated
+      # key. base64 -d ignores the CRLF of a Windows-made base64 string once the
+      # whitespace is stripped; the keytool check fails the job early on a wrong
+      # upload instead of on the phone at install time.
+      - name: Write the debug signing key from the repository secret
+        env:
+          KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::DEBUG_KEYSTORE_BASE64 is empty: add the base64 of %USERPROFILE%\.android\debug.keystore as a repository secret"
+            exit 1
+          fi
           mkdir -p ~/.android
-          keytool -genkeypair -noprompt \
-            -keystore ~/.android/debug.keystore -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n ' | base64 --decode > ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey > /dev/null
 
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
@@ -91,11 +84,11 @@ jobs:
           SDKROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           BUILD_TOOLS=$(find "$SDKROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
           if [ -x "$BUILD_TOOLS/apksigner" ]; then
-            # AGP 9 signs the debug variant with a keystore of its own, not the
-            # cached one: the run that added the digest line below printed a
-            # "keystore sha256" different from the APK signer digest, a fresh key
-            # per run, i.e. the bug this job exists to fix. Re-sign with the key
-            # the job keeps; zipalign already ran in AGP and apksigner keeps it.
+            # AGP 9 signs the debug variant with a keystore of its own: a run
+            # printed a "keystore sha256" different from the APK signer digest, a
+            # fresh key per run, i.e. the bug this job exists to fix. Re-sign with
+            # the key from the secret; zipalign already ran in AGP and apksigner
+            # keeps it.
             "$BUILD_TOOLS/apksigner" sign \
               --ks ~/.android/debug.keystore --ks-key-alias androiddebugkey \
               --ks-pass pass:android --key-pass pass:android \
@@ -106,15 +99,20 @@ jobs:
             echo "apksigner not found under $SDKROOT, APK signature not verified" > final_apk/SIGNER.txt
             echo "::warning::apksigner not found under $SDKROOT, APK signature not verified"
           fi
-          # The same question from the other side: the digest of the key this job
-          # keeps. It has to equal the APK signer digest above, otherwise the APK
-          # is signed by a key that never reaches the cache and the next run's
-          # APK cannot update it. keytool prints A-F and colons, apksigner lower
-          # case without, so normalise to compare by eye.
-          echo "keystore sha256=$(keytool -list -v -keystore ~/.android/debug.keystore \
+          # The same question from the other side: the digest of the key from the
+          # secret. keytool prints A-F and colons, apksigner lower case without,
+          # so normalise both and fail the job when they differ: an APK signed by
+          # another key is one the phone refuses to update over the installed app.
+          KS_SHA256=$(keytool -list -v -keystore ~/.android/debug.keystore \
             -storepass android -alias androiddebugkey 2>/dev/null \
-            | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-Z' 'a-z')" >> final_apk/SIGNER.txt
+            | grep -m1 'SHA256:' | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-Z' 'a-z')
+          APK_SHA256=$(sed -n 's/.*certificate SHA-256 digest: *//p' final_apk/SIGNER.txt | head -n1)
+          echo "keystore sha256=$KS_SHA256" >> final_apk/SIGNER.txt
           cat final_apk/SIGNER.txt
+          if [ -n "$APK_SHA256" ] && [ "$APK_SHA256" != "$KS_SHA256" ]; then
+            echo "::error::APK signer $APK_SHA256 does not match the debug keystore $KS_SHA256"
+            exit 1
+          fi
           (cd final_apk && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
           ls -lh final_apk/
 

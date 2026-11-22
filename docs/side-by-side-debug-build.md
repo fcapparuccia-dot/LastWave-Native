@@ -108,22 +108,22 @@ C:\Users\fcapp\scrcpy\adb.exe shell am start -n com.lastwave.app.debug/com.lastw
 `.github/workflows/build-debug-apk.yml` builds `assembleDebug` with `-PapplicationId=com.lastwave.app.debug` and uploads
 `final_apk/LastWave-v<version>-debug.apk`, `SHA256SUMS.txt` and `SIGNER.txt` (the `apksigner verify --print-certs` output).
 
-The job restores one cached `~/.android/debug.keystore` (cache key `lastwave-ci-debug-keystore-v1`), so successive CI
-artifacts share a key and update each other. That key is **not** this machine's `%USERPROFILE%\.android\debug.keystore`,
-so the first CI APK needs one uninstall of the side-by-side app.
+The job writes `~/.android/debug.keystore` from the **`DEBUG_KEYSTORE_BASE64`** repository secret, so CI artifacts are
+signed with the same key as this machine and install over the app already on the phone with `adb install -r` — no
+uninstall, no data loss. The secret is the base64 of `%USERPROFILE%\.android\debug.keystore`:
 
-`actions/cache` saves a path only if it still exists when the job ends, and the first run of this job ended with
-`Path Validation Error: Path(s) specified in the action for caching do(es) not exist, hence no cache is being saved` —
-a miss that could never become a hit, i.e. the bug this cache exists to fix. The job therefore creates the keystore
-itself on a cache miss (`keytool -genkeypair`, alias `androiddebugkey`, store/key password `android`, the same values
-AGP uses), so a restored key and a generated key are interchangeable.
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) | Set-Clipboard
+```
 
-`SIGNER.txt` carries both sides of the check: the `apksigner` `V2 Signer: certificate SHA-256 digest` of the APK and a
-normalised `keystore sha256=…` line of the cached key. If those two differ, the APK is signed by a key that never
-reaches the cache and the next run's APK will not update it.
+GitHub → *Settings › Secrets and variables › Actions › New repository secret*, name `DEBUG_KEYSTORE_BASE64`, value =
+whatever `Set-Clipboard` put on the clipboard (multi-line is fine: the job strips the CRLF before `base64 --decode`).
+The keystore must keep the standard alias and passwords (`androiddebugkey`, `android`), which the job uses; if the
+secret is missing the step fails on purpose instead of silently publishing an APK signed with another key.
 
-That is what the first fully-working run showed: AGP 9 signs the debug variant with a keystore of its own, so the two
-digests differed and the APK changed key every run. The staging step therefore re-signs the APK with the cached key
+`SIGNER.txt` carries both sides of the check: the `apksigner` `V3.0 Signer: certificate SHA-256 digest` of the APK and a
+normalised `keystore sha256=…` line, and the staging step now **fails the job** when they differ. That guard is needed
+because AGP 9 signs the debug variant with a keystore of its own: the step re-signs the APK with the secret key
 (`apksigner sign --ks ~/.android/debug.keystore`, alias `androiddebugkey`, password `android`) before publishing it.
 
 A key mismatch is what an OEM installer shows as *"package not installed because it conflicts with an existing package
@@ -162,7 +162,11 @@ What does **not** travel and has to be recreated there:
 
 Two more traps:
 
-* The debug APK is signed with the machine-local `%USERPROFILE%\.android\debug.keystore`, so installing a build made on the second PC over the debug app already on the phone fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: `adb uninstall com.lastwave.app.debug` first, or copy the keystore across.
+* The debug APK is signed with the machine-local `%USERPROFILE%\.android\debug.keystore`, so a *local* build made on the
+  second PC cannot update the debug app on the phone unless that keystore is copied next to `%USERPROFILE%\.android\`
+  there too (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, cured by `adb uninstall com.lastwave.app.debug` only at the cost of
+  the app data). The CI workflow signs with the same key from the `DEBUG_KEYSTORE_BASE64` secret, so its APK updates in
+  place.
 * Make sure the folder is fully hydrated before the first build (Explorer → right-click the folder → "Always keep on this device"), otherwise `gradlew` itself can be a dehydrated placeholder.
 
 Whole flow on the new machine — the three paths at the top are the only things to edit:
@@ -278,4 +282,21 @@ What was actually run end to end on a motorola edge 60 (`ZY22LJS7N3`), after run
 
 The installed signer hash (`238704e3`) is PackageManager's own 32-bit digest of the certificate, not the
 certificate's SHA-256 — compare it only with itself across installs, never with `SIGNER.txt`.
+
+### 7.1 Key mismatch without uninstalling — 2026-11-22
+
+The phone had gone back to a locally signed debug build (`signatures:[75953fef]`, certificate `05e3717a…`), so the CI
+artifact (certificate `100396dc…`) failed again with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Instead of uninstalling, the
+artifact was re-signed on the PC with the phone's key:
+
+```powershell
+$env:JAVA_HOME = 'C:\Users\fcapp\.gradle\jdks\eclipse_adoptium-25-amd64-windows.2'
+& 'C:\Users\fcapp\Android\Sdk\build-tools\37.0.0\apksigner.bat' sign `
+  --ks "$env:USERPROFILE\.android\debug.keystore" --ks-key-alias androiddebugkey `
+  --ks-pass pass:android --key-pass pass:android .\LastWave-v5.2.3-debug.apk
+```
+
+`apksigner verify --print-certs` then reported `05e3717a…`, `adb install -r` said `Success`, `ceDataInode` stayed
+`580969` (data preserved) and the app started. That manual step is exactly what `DEBUG_KEYSTORE_BASE64` removes: with the
+secret in place the workflow publishes an APK that installs over the local build directly.
 
