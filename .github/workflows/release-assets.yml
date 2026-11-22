@@ -1,17 +1,41 @@
-name: Build 5.2.1 Release Assets
+name: Build Release Assets (verified bundle)
 
+# Manual on purpose: release.yml is the path that publishes a GitHub Release.
+# This workflow only produces the verified bundle of the four variants as
+# artifacts. The version is read from app/build.gradle.kts, so it never has to
+# be edited again for a new release.
 on:
-  push:
-    branches: [ codex/release-5.2.1 ]
-    paths-ignore: [ '**.md' ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      code: ${{ steps.version.outputs.code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Read versionName and versionCode
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 -oE 'versionName = "[^"]+"' app/build.gradle.kts | sed -E 's/.*"(.*)"/\1/')
+          CODE=$(grep -m1 -oE 'versionCode = [0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')
+          test -n "$VERSION"
+          test -n "$CODE"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "Building LastWave v$VERSION ($CODE)"
+
   build:
     name: Build ${{ matrix.variant }} APK
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -65,6 +89,18 @@ jobs:
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
+      # Robolectric fetches its android-all-instrumented jar from Maven on the
+      # first test run; a failed download fails the class (classMethod FAILED)
+      # and turns the job red without a code problem.
+      - name: Cache Robolectric android-all jars
+        if: matrix.variant == 'universal'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Verify patch regressions
         if: matrix.variant == 'universal'
         run: >-
@@ -93,7 +129,7 @@ jobs:
         if: ${{ always() && matrix.variant == 'universal' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: LastWave-v5.2.1-regression-test-results
+          name: LastWave-v${{ needs.version.outputs.version }}-regression-test-results
           path: |
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/
@@ -115,7 +151,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p final_apk
-          APK="final_apk/LastWave-v5.2.1-${VARIANT}.apk"
+          APK="final_apk/LastWave-v${{ needs.version.outputs.version }}-${VARIANT}.apk"
           cp "app/build/outputs/apk/${APK_OUTPUT}" "$APK"
           SDKROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           BUILD_TOOLS=$(find "$SDKROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
@@ -132,26 +168,26 @@ jobs:
             *) echo "::error::Unexpected signing certificate for $APK"; exit 1 ;;
           esac
           "$AAPT" dump badging "$APK" > badging.txt
-          grep -F "package: name='${EXPECTED_PACKAGE}' versionCode='33' versionName='5.2.1'" badging.txt
+          grep -F "package: name='${EXPECTED_PACKAGE}' versionCode='${{ needs.version.outputs.code }}' versionName='${{ needs.version.outputs.version }}'" badging.txt
           grep -Fx "sdkVersion:'${EXPECTED_MIN_SDK}'" badging.txt
 
       - name: Upload verified APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: LastWave-v5.2.1-${{ matrix.variant }}-verified
+          name: LastWave-v${{ needs.version.outputs.version }}-${{ matrix.variant }}-verified
           path: final_apk/*.apk
           if-no-files-found: error
           compression-level: 0
 
   collect:
     name: Package all release assets
-    needs: build
+    needs: [ version, build ]
     runs-on: ubuntu-latest
     steps:
       - name: Download four verified APKs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: LastWave-v5.2.1-*-verified
+          pattern: LastWave-v${{ needs.version.outputs.version }}-*-verified
           merge-multiple: true
           path: final_apk
 
@@ -167,7 +203,7 @@ jobs:
       - name: Upload complete release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: LastWave-v5.2.1-release-assets
+          name: LastWave-v${{ needs.version.outputs.version }}-release-assets
           path: final_apk/*
           if-no-files-found: error
           compression-level: 0

@@ -40,6 +40,17 @@ jobs:
       - name: Grant Gradle execute permission
         run: chmod +x gradlew
 
+      # Robolectric fetches its android-all-instrumented jar from Maven on the
+      # first test run; a failed download fails the class (classMethod FAILED)
+      # and turns the job red without a code problem.
+      - name: Cache Robolectric android-all jars
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Verify download and playback regressions
         run: >-
           ./gradlew :app:testDebugUnitTest
