@@ -367,6 +367,8 @@ class MusicPlayer @Inject constructor(
     private val radioQueueMutex = Mutex()
     internal var radioQueueActive = false
     private val radioUsedSeeds = ConcurrentHashMap.newKeySet<String>()
+    private var artistRadioPreviousSourceLabel: String? = null
+    private var stopAfterArtistRadio = false
     @Volatile
     private var currentRadioContinuationToken: String? = null
     @Volatile
@@ -2770,6 +2772,7 @@ class MusicPlayer @Inject constructor(
         )
         if (isCasting) {
             onMain {
+                stopAfterArtistRadio = false
                 cancelPendingPlaybackResolution()
                 ensureForegroundService()
                 _state.value = _state.value.copy(current = selectedTrack, queue = tracks,
@@ -2791,6 +2794,7 @@ class MusicPlayer @Inject constructor(
         preloadJob?.cancel()
         onMain {
             if (generation != playRequestGeneration.get()) return@onMain
+            stopAfterArtistRadio = false
             ensureForegroundService()
             // drop any running automix blend, the old decks are going away
             autoMixCoordinator.get().cancelTransition(revertToPrimary = true)
@@ -3107,7 +3111,7 @@ class MusicPlayer @Inject constructor(
             val wasEmpty = player.mediaItemCount == 0
             val wasEnded = player.playbackState == Player.STATE_ENDED
             val previousCount = player.mediaItemCount
-            player.addMediaItems(fresh.map(PlayableTrack::toMediaItem))
+            appendToQueueEnd(fresh.map(PlayableTrack::toMediaItem))
             refresh(player)
             val currentIndex = player.currentMediaItemIndex
             enrichUpcomingQueue(currentIndex.coerceAtLeast(0))
@@ -3133,6 +3137,38 @@ class MusicPlayer @Inject constructor(
             clearUpcoming()
             appendTracksToQueue(tracks)
         }
+    }
+
+    suspend fun replaceUpcomingWithArtistRadio(
+        seed: PlayableTrack,
+        tracks: List<PlayableTrack>,
+    ): Boolean = withContext(Dispatchers.Main.immediate) {
+        val state = _state.value
+        if (state.current?.queueKey() != seed.queueKey() || state.isArtistRadioQueue) return@withContext false
+        val upcoming = tracks.filterNot { it.queueKey() == seed.queueKey() }
+        if (upcoming.isEmpty()) return@withContext false
+
+        artistRadioPreviousSourceLabel = state.sourceLabel
+        stopAfterArtistRadio = false
+        retainCurrentTrackOnly()
+        appendTracksToQueue(upcoming)
+        _state.update {
+            it.copy(sourceLabel = artistRadioLabel(seed.artist), isEndlessQueue = false)
+        }
+        persistPlaybackSession()
+        true
+    }
+
+    fun stopArtistRadioAfterCurrent() = onMain {
+        if (!_state.value.isArtistRadioQueue) return@onMain
+        retainCurrentTrackOnly()
+        stopAfterArtistRadio = true
+        // A single-item queue with repeat enabled would never stop here.
+        setRepeatMode(Player.REPEAT_MODE_OFF)
+        val sourceLabel = artistRadioPreviousSourceLabel ?: "LastWave"
+        artistRadioPreviousSourceLabel = null
+        _state.update { it.copy(sourceLabel = sourceLabel, isEndlessQueue = false) }
+        persistPlaybackSession()
     }
 
     /** Adds the varied continuation loaded for a search-started track.
@@ -3986,6 +4022,26 @@ class MusicPlayer @Inject constructor(
             it.copy(sleepTimerRemainingMs = sleepTimerDeadlineMs?.minus(SystemClock.elapsedRealtime()))
         }
     }
+    @MainThread
+    private fun retainCurrentTrackOnly() {
+        cancelCrossfade()
+        disableDiscoverQueue()
+        disableRadioQueue()
+        if (isCasting) {
+            val current = _state.value.current ?: return
+            _state.update { it.copy(queue = listOf(current), currentIndex = 0, isEndlessQueue = false) }
+            persistPlaybackSession()
+            return
+        }
+        val currentIndex = player.currentMediaItemIndex
+        if (currentIndex !in 0 until player.mediaItemCount) return
+        if (currentIndex + 1 < player.mediaItemCount) {
+            player.removeMediaItems(currentIndex + 1, player.mediaItemCount)
+        }
+        if (currentIndex > 0) player.removeMediaItems(0, currentIndex)
+        refresh(player)
+    }
+
     fun clearUpcoming() = onMain {
         if (isCasting) {
             _state.update { it.copy(queue = it.queue.take(it.currentIndex + 1), isEndlessQueue = false) }
@@ -5242,7 +5298,9 @@ class MusicPlayer @Inject constructor(
                 }
             } else {
                 val currentTrack = player.currentMediaItem?.toPlayableTrack()
-                if (autoplaySimilarEnabled && currentTrack != null && !isRepeatOne && currentTrack.mediaType == MediaType.SONG) {
+                if (!stopAfterArtistRadio && autoplaySimilarEnabled && currentTrack != null &&
+                    !isRepeatOne && currentTrack.mediaType == MediaType.SONG
+                ) {
                     radioQueueActive = true
                     _state.update { it.copy(isEndlessQueue = true) }
                     startRadioQueue(currentTrack, resumePlaybackImmediately = true)

@@ -912,16 +912,22 @@ class InnerTubeMusicApi @Inject constructor(
     /** [countryCode] is the chart country (ISO 3166-1 alpha-2, `ZZ` = worldwide).
      *  Null keeps the chart on the visitor's own country, which is what the app
      *  screens show. A `gl` override never changes the chart content: the country
-     *  only takes effect through `formData.selectedValues`. */
+     *  only takes effect through `formData.selectedValues`.
+     *
+     *  That page has no song rows: the ranking is only linked as playlists, so
+     *  the tracks come from the country's Top 100 card, which YouTube keeps
+     *  updated itself. */
     suspend fun fetchCharts(countryCode: String? = null): List<YouTubeMusicTrack> = withContext(Dispatchers.IO) {
-        runCatching {
-            val root = browseRoot(
-                YT_CHARTS_BROWSE_ID,
-                authenticated = false,
-                chartCountry = countryCode,
-            )
-            parseSongRenderers(root)
-        }.getOrDefault(emptyList())
+        val chart = runCatching { chartPlaylist(countryCode) }.getOrNull() ?: return@withContext emptyList()
+        runCatching { fetchPlaylist(chart.id, maxTracks = CHART_TRACK_LIMIT)?.tracks.orEmpty() }
+            .getOrDefault(emptyList())
+    }
+
+    private suspend fun chartPlaylist(countryCode: String?): YouTubePlaylistSummary? {
+        val root = runCatching {
+            browseRoot(YT_CHARTS_BROWSE_ID, authenticated = false, chartCountry = countryCode)
+        }.getOrNull() ?: return null
+        return parseChartPlaylistCards(root).bestChartCard()
     }
 
     suspend fun fetchHomeMixes(): List<YouTubePlaylistSummary> = withContext(Dispatchers.IO) {
@@ -3070,6 +3076,8 @@ class InnerTubeMusicApi @Inject constructor(
         /** Albums *and* singles in one grid — YouTube Music has no singles page. */
         const val NEW_RELEASES_ALBUMS_BROWSE_ID = "FEmusic_new_releases_albums"
         const val YT_CHARTS_BROWSE_ID = "FEmusic_charts"
+        /** One page of a country's chart playlist: the Top 100 arrives whole. */
+        const val CHART_TRACK_LIMIT = 100
         const val MAX_CONTINUATION_PAGES = 600
         const val WRITE_ACTIONS_PER_REQUEST = 50
 

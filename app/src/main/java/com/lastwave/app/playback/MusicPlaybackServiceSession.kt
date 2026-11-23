@@ -507,8 +507,13 @@ internal fun MusicPlaybackService.updateMediaSessionVolumeRouting(isCasting: Boo
     }
 
 internal fun MusicPlaybackService.publishSessionQueue(session: MediaSessionCompat, state: MusicPlayerState) {
-        val signature = state.queue.joinToString(separator = "|") {
-            "${it.videoId.orEmpty()}:${it.title}:${it.artist}"
+        val signature = buildString {
+            append(state.sourceLabel).append('|')
+            append(
+                state.queue.joinToString(separator = "|") {
+                    "${it.videoId.orEmpty()}:${it.title}:${it.artist}"
+                },
+            )
         }
         if (signature == sessionQueueSignature) return
         sessionQueueSignature = signature

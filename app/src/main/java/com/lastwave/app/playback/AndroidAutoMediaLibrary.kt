@@ -5,7 +5,6 @@ import android.net.Uri
 import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaDescriptionCompat
 import android.util.Base64
-import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.generate.LocalAudioFormats
 import com.lastwave.app.data.generate.youtubeVideoIdOrNull
 import com.lastwave.app.data.local.SettingsPreferences
@@ -36,7 +35,6 @@ import com.lastwave.app.data.search.SearchResultItem
 import com.lastwave.app.data.search.SearchTab
 import com.lastwave.app.data.ytmusic.YtMusicLibraryManager
 import com.lastwave.app.util.ArtistHelper
-import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -70,10 +68,6 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val podcastRepository: PodcastRepository,
     private val recentPlaylistStore: RecentPlaylistStore,
     private val settingsPreferences: SettingsPreferences,
-    // Lazy: the chart node is the only consumer, and building the whole
-    // recommendation pipeline for a widget tap or a browse root would cost
-    // more than the node it feeds.
-    private val generateRepository: Lazy<GenerateRepository>,
 ) {
     private val nextSearchToken = AtomicLong()
     private val searchQueues = object : LinkedHashMap<String, List<PlayableTrack>>(8, 0.75f, true) {
@@ -712,11 +706,14 @@ class AndroidAutoMediaLibrary @Inject constructor(
         else MediaBrowserCompat.MediaItem.FLAG_PLAYABLE,
     )
 
-    /** One tap from any page back to the Home tab of the car's root. */
+    /** One tap from any page back to the main page: the app's blue mark
+     *  alone, with no label, so the row reads as LastWave instead of another
+     *  collection. The system back arrow still walks one level up at a time. */
     private fun homeRow() = browsableItem(
         mediaId = HOME_ID,
-        title = "Home",
-        subtitle = "Torna alla home",
+        title = "",
+        subtitle = "",
+        iconUri = carLogoUri(),
     )
 
     private fun cacheTracks(tracks: List<PlayableTrack>): String {
@@ -1508,6 +1505,13 @@ class AndroidAutoMediaLibrary @Inject constructor(
         return true
     }
 
+    suspend fun prepareArtistRadioAfterCurrent(seed: PlayableTrack, player: MusicPlayer): Boolean {
+        val tracks = bounded(ARTIST_RADIO_NETWORK_BUDGET_MS) {
+            artistRepository.getArtistRadio(seed.artist, seed)
+        }.orEmpty()
+        return player.replaceUpcomingWithArtistRadio(seed, tracks)
+    }
+
     private data class CarArtist(val name: String, val artworkUrl: String?)
 
     private fun playQueueFrom(
@@ -1556,14 +1560,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
                 else -> innerTube.fetchCharts(country.code).map { it.toPlayableTrack() }
             }
         }?.take(CHART_LIMIT).orEmpty()
-        if (fresh.isEmpty()) {
-            // A rejected chart call must not leave the car's only
-            // fresh-install node empty.
-            val fallback = bounded(CHART_NETWORK_BUDGET_MS) {
-                generateRepository.get().fetchChartTracks(CHART_LIMIT).map { it.toPlayableTrack() }
-            }.orEmpty()
-            return fallback.ifEmpty { cached?.takeIf { it.country == country }?.tracks.orEmpty() }
-        }
+        // A rejected chart call keeps the last good list instead of standing in
+        // another chart for this one: a shuffled Last.fm global chart used to be
+        // served here, which made a wrong chart look like the country's.
+        if (fresh.isEmpty()) return cached?.takeIf { it.country == country }?.tracks.orEmpty()
         chartCache = ChartCache(country, fresh, System.currentTimeMillis())
         return fresh
     }
@@ -1954,6 +1954,11 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private fun appIconUri(): Uri = Uri.parse(
         "android.resource://${context.packageName}/${com.lastwave.app.R.drawable.ic_car_attribution}",
     )
+
+    /** The blue LastWave mark: the same four bars as the launcher icon, on
+     *  the debug icon's blue field. The car Home row shows it without text. */
+    private fun carLogoUri(): String =
+        "android.resource://${context.packageName}/${com.lastwave.app.R.drawable.ic_car_home_logo}"
 
     private fun trackCountLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
 

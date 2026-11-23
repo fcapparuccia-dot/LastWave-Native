@@ -980,6 +980,42 @@ internal fun InnerTubeMusicApi.parseNewReleaseCards(root: JsonElement): List<New
         }.distinctBy { it.browseId }
     }
 
+/**
+ * The playlists a country's YouTube Music charts page links. That page carries
+ * no song rows — the ranking is only reachable through these cards — and their
+ * titles are localized ("I 100 video musicali più visti in Italia", "Top 100
+ * Music Videos United Kingdom"), so [bestChartCard] picks by the number.
+ */
+internal fun InnerTubeMusicApi.parseChartPlaylistCards(root: JsonElement): List<YouTubePlaylistSummary> {
+        val renderers = mutableListOf<JsonObject>()
+        collectObjects(root, "musicTwoRowItemRenderer", renderers)
+        return renderers.mapNotNull { renderer ->
+            val endpoint = renderer.obj("navigationEndpoint")?.obj("browseEndpoint")
+                ?: return@mapNotNull null
+            val pageType = endpoint.obj("browseEndpointContextSupportedConfigs")
+                ?.obj("browseEndpointContextMusicConfig")?.string("pageType")
+            if (pageType != "MUSIC_PAGE_TYPE_PLAYLIST") return@mapNotNull null
+            val browseId = endpoint.string("browseId")?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            val title = renderer.obj("title")?.array("runs")
+                ?.joinToString("") { it.asObject()?.string("text").orEmpty() }
+                ?.trim().orEmpty()
+            if (title.isEmpty()) return@mapNotNull null
+            YouTubePlaylistSummary(
+                id = browseId,
+                title = title,
+                artworkUrl = extractThumbnailsUrl(renderer),
+            )
+        }.distinctBy { it.id }
+}
+
+/** The country chart among the cards: "Top 100 Live Performances" is a 100-card
+ *  too and opens some markets, so it is only ever used when nothing else is left. */
+internal fun List<YouTubePlaylistSummary>.bestChartCard(): YouTubePlaylistSummary? {
+        val notLive = filterNot { it.title.contains("live", ignoreCase = true) }
+        return notLive.firstOrNull { "100" in it.title } ?: notLive.firstOrNull() ?: firstOrNull()
+}
+
 internal fun InnerTubeMusicApi.extractThumbnailsUrl(renderer: JsonElement): String? {
         val foundArrays = mutableListOf<JsonArray>()
         fun findThumbnails(el: JsonElement) {

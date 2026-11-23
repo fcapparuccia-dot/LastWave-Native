@@ -185,6 +185,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
     internal var cleanedSourceArtist = ""
     internal var cleanedMetadata = CleanTrackMetadata("", "")
     internal var artworkJob: Job? = null
+    internal var artistRadioPreparationJob: Job? = null
     /** Feeds synced lyrics to the OriginOS music card / Origin Island (vivo only). */
     internal var originLyricsJob: Job? = null
     internal var originLyricsMediaId: String? = null

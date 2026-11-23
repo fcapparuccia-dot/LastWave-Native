@@ -5,8 +5,8 @@ import android.support.v4.media.MediaBrowserCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
+import com.lastwave.app.R
 import com.lastwave.app.data.generate.GeneratedTrack
-import com.lastwave.app.data.generate.GenerateRepository
 import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
 import com.lastwave.app.data.local.db.SongPlayStatsEntity
@@ -31,7 +31,6 @@ import com.lastwave.app.data.search.SearchRepository
 import com.lastwave.app.data.search.SearchResultItem
 import com.lastwave.app.data.search.SearchTab
 import com.lastwave.app.data.ytmusic.YtMusicLibraryManager
-import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -73,7 +72,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         val album = SearchResultItem(
             name = "Album",
@@ -239,7 +237,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
 
         val homeTitles = library.loadChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
@@ -292,7 +289,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
 
         // The device region is the default selection, and it is the first row.
@@ -412,7 +408,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
         val artists = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ARTISTS_ID, MusicPlayerState())
         assertEquals(listOf("Artist"), artists.map { it.description.title.toString() })
@@ -486,7 +481,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
 
         // The root's rows are the tabs themselves: no Home row above them.
@@ -495,22 +489,31 @@ class AndroidAutoMediaLibrarySearchTest {
 
         // Home itself never repeats the row that would open it.
         val home = library.loadCarChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
-        assertFalse(home.any { it.description.title == "Home" })
+        assertFalse(home.any { it.description.mediaId == AndroidAutoMediaLibrary.HOME_ID })
 
-        // Any other page, top level or nested, opens with one tap back to Home.
+        // Any other page, top level or nested, opens with one tap back to Home:
+        // the blue LastWave mark alone, no label, and not a playable row.
         val libraryPage = library.loadCarChildren(AndroidAutoMediaLibrary.LIBRARY_ID, MusicPlayerState())
-        assertEquals(AndroidAutoMediaLibrary.HOME_ID, libraryPage.first().description.mediaId)
-        assertTrue(libraryPage.first().isBrowsable)
-        assertEquals(listOf("Home", "Playlist", "Album salvati", "Artisti"), libraryPage.titles())
+        val homeRow = libraryPage.first()
+        assertEquals(AndroidAutoMediaLibrary.HOME_ID, homeRow.description.mediaId)
+        assertTrue(homeRow.isBrowsable)
+        assertFalse(homeRow.isPlayable)
+        assertEquals("", homeRow.description.title.toString())
+        assertEquals("", homeRow.description.subtitle.toString())
         assertEquals(
-            listOf("Home"),
+            "android.resource://com.lastwave.app/${R.drawable.ic_car_home_logo}",
+            homeRow.description.iconUri.toString(),
+        )
+        assertEquals(listOf("", "Playlist", "Album salvati", "Artisti"), libraryPage.titles())
+        assertEquals(
+            listOf(""),
             library.loadCarChildren(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID, MusicPlayerState()).titles(),
         )
 
         // The phone lists built on the same rows (the OriginOS card) stay plain.
         assertFalse(
             library.loadChildren(AndroidAutoMediaLibrary.PLAYLISTS_ID, MusicPlayerState())
-                .any { it.description.title == "Home" },
+                .any { it.description.mediaId == AndroidAutoMediaLibrary.HOME_ID },
         )
     }
 
@@ -544,7 +547,6 @@ class AndroidAutoMediaLibrarySearchTest {
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-            generateRepository = mockk<Lazy<GenerateRepository>>(relaxed = true),
         )
 
         val page = library.loadChildren("playlist:7", MusicPlayerState())

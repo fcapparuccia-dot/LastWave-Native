@@ -76,6 +76,36 @@ deduplica e la limita a 12 voci. Sfoglia e le pagine dei generi sono tenute in
 cache (una ora per l'elenco dei gruppi, LRU per generi e playlist) perché ogni
 accensione dell'auto riapre gli stessi nodi.
 
+## Classifica del paese («Popolari ora»)
+
+`FEmusic_charts` **non contiene brani**: la pagina classifiche risponde con il
+menu dei paesi (71 voci), il carousel `musicCarouselShelfRenderer` «Video charts»
+con le card `musicTwoRowItemRenderer`, e la classifica artisti. `parseSongRenderers`
+cercava righe di brani dentro quella risposta e tornava sempre vuoto, quindi il
+nodo ripiegava su `GenerateRepository.fetchChartTracks` (Last.fm
+`chart.gettoptracks`, pagina casuale e `shuffle`, senza parametro paese) oppure su
+`fetchHomeSongs`: in auto «Popolari ora» mostrava una classifica globale casuale,
+identica per ogni paese e diversa a ogni apertura.
+
+Ora `fetchCharts(countryCode)` prende i brani dalla **card del paese**:
+
+| Passo | Codice |
+|---|---|
+| pagina classifiche del paese (`formData.selectedValues = [codice]`) | `browseRoot(YT_CHARTS_BROWSE_ID, chartCountry = …)` |
+| card playlist della pagina | `parseChartPlaylistCards` (`InnerTubeMusicApiParsers.kt`) |
+| scelta della card | `bestChartCard()`: la prima con `100` nel titolo; «Live Performances» solo se non resta altro |
+| brani | `fetchPlaylist(card.id, maxTracks = CHART_TRACK_LIMIT)` |
+
+Le card sono playlist ufficiali per paese che YouTube aggiorna da sé, quindi la
+classifica resta quella del momento senza ID scritti nel codice. I titoli sono
+localizzati ("I 100 video musicali più visti in Italia", "Top 100 Music Videos
+United Kingdom", "Top 100 der Musikvideos in Deutschland", "Top 100 des clips
+musicaux France"): per questo la scelta guarda il numero e non le parole.
+Verificato sulle risposte reali di IT, GB, US, DE, FR e Global (`ZZ`), anche con
+`hl=it`: la card scelta è sempre la Top 100 del paese. La playlist arriva intera in
+una pagina; il nodo mostra `CHART_LIMIT` (40) brani con la cache di 30 minuti, e se
+la chiamata fallisce resta l'ultima lista buona invece di un'altra classifica.
+
 ## Pagina artista
 
 **Libreria → Artisti** non avvia più subito la radio: ogni artista apre una
@@ -123,9 +153,13 @@ salvare un'altra raccolta. Dopo il tap il servizio notifica **Preferiti**,
 Android Auto mostra le schede dell'app (Home, Recenti, Sfoglia, Libreria) solo
 alla radice: dentro un sottomenu resta la freccia indietro, un livello per tap.
 Per questo `loadCarChildren` antepone a **ogni** pagina tranne la radice e la
-Home una riga **Home** (`category:home`, sfogliabile) che riapre la scheda Home
-con un tap. La riga non compare nelle liste telefono che riusano lo stesso
-albero (`loadChildren`, usato dalla scheda musicale OriginOS).
+Home una riga che riapre la scheda Home con un tap (`category:home`,
+sfogliabile). La riga non porta testo: mostra solo l'icona blu di LastWave
+(`ic_car_home_logo`, il marchio su campo `#2979FF` dell'icona debug), così la
+posizione in alto a sinistra è il logo dell'app e non l'ennesima voce di
+libreria. La freccia indietro dell'host continua a salire di un livello per
+tap. La riga non compare nelle liste telefono che riusano lo stesso albero
+(`loadChildren`, usato dalla scheda musicale OriginOS).
 
 La schermata di riproduzione dell'auto non è pilotabile dall'app: una custom
 action della sessione non può cambiare la pagina sfogliata dall'host, quindi il
@@ -211,9 +245,17 @@ ridisegnata dall'host) appena la coda diventa una radio o smette di esserlo.
    **♥ Remove from favorites** senza lasciare la pagina, e che la raccolta
    compaia in **Album salvati** / **Preferiti** e si riapra con i suoi brani.
 10. Verificare che ogni pagina dei sottomenu (Libreria, Artisti, album,
-    compilation, Sfoglia, Nuove uscite, coda **In riproduzione**) parta con la
-    riga **Home** e che il tap riporti alla scheda Home, e che nelle liste della
-    scheda musicale OriginOS la riga Home non compaia.
+    compilation, Sfoglia, Nuove uscite, coda **In riproduzione**) parta con
+    l'icona blu di LastWave e che il tap riporti alla scheda Home, e che nelle
+    liste della scheda musicale OriginOS quell'icona non compaia.
+11. Aprire **Popolari ora** e poi **Country: Italy**: la pagina deve elencare la
+    stessa Top 100 di `music.youtube.com/playlist?list=PL4fGSI1pDJn5BPviUFX4a3IMnAgyknC68`
+    (in Italia il 23/11/2026: 1. *PER NOI (feat. Achille Lauro)*, 2. *Dai Dai*).
+    Ripetere con **United Kingdom** (`PL4fGSI1pDJn688ebB8czINn0_nov50e3A`) e
+    **Worldwide** (`PL4fGSI1pDJn5kI81J1fYWK5eZRl1zJ5kM`), che negli USA/GB parte
+    con la card «Live Performances» e deve comunque scegliere la Top 100. Con la
+    rete in modalità aereo il nodo deve restare vuoto (nessuna classifica
+    inventata) e non mostrare una lista diversa da quella ufficiale.
 
 I test non sono stati eseguiti: su questo PC `java`/`javac`, Android Studio,
 Android SDK e `adb` non risultavano disponibili. L'installazione di Temurin JDK

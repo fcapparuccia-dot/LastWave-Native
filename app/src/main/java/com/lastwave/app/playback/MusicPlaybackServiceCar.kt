@@ -182,16 +182,30 @@ internal fun MusicPlaybackService.playCarMediaId(mediaId: String) {
     }
 
 internal fun MusicPlaybackService.playCarArtistRadio() {
+        if (musicPlayer.state.value.isArtistRadioQueue) {
+            artistRadioPreparationJob?.cancel()
+            artistRadioPreparationJob = null
+            musicPlayer.stopArtistRadioAfterCurrent()
+            return
+        }
+        if (artistRadioPreparationJob?.isActive == true) {
+            artistRadioPreparationJob?.cancel()
+            artistRadioPreparationJob = null
+            return
+        }
         val track = musicPlayer.state.value.current ?: return
-        scope.launch {
-            val played = runCatching {
+        artistRadioPreparationJob = scope.launch {
+            val prepared = try {
                 withContext(Dispatchers.IO) {
-                    androidAutoLibrary.playArtistRadio(track.artist, track, musicPlayer)
+                    androidAutoLibrary.prepareArtistRadioAfterCurrent(track, musicPlayer)
                 }
-            }.onFailure { error ->
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
                 android.util.Log.w("MusicPlaybackService", "Artist radio request failed", error)
-            }.getOrDefault(false)
-            if (!played) publishCarPlaybackError("Artist radio unavailable")
+                false
+            }
+            if (!prepared) publishCarPlaybackError("Artist radio unavailable")
         }
     }
 
