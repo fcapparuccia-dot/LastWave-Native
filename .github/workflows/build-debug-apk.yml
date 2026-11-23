@@ -1,12 +1,13 @@
 name: Build LastWave Debug APK
 
-# `build.yml` builds `assembleRelease`, which needs SIGNING_KEY /
-# RELEASE_STORE_PASSWORD as repo secrets: app/build.gradle.kts refuses to sign a
-# release variant with the runner's debug key (that APK would install once, then
-# break every update with INSTALL_FAILED_UPDATE_INCOMPATIBLE). This checkout has
-# no such secrets, so this job builds the debug variant instead - signed with the
-# developer machine's debug key from DEBUG_KEYSTORE_BASE64 and, with the
-# applicationId override, installable next to a release app already on the phone.
+# `build.yml` builds `assembleRelease` on every push to main, signed with the
+# release keystore from the repository secrets SIGNING_KEY / RELEASE_KEY_ALIAS /
+# RELEASE_STORE_PASSWORD / RELEASE_KEY_PASSWORD (app/build.gradle.kts refuses to
+# sign a release variant with the runner's debug key: that APK would install
+# once, then break every update with INSTALL_FAILED_UPDATE_INCOMPATIBLE). This
+# job builds the debug variant instead, signed with the developer machine's
+# debug key from DEBUG_KEYSTORE_BASE64 and, with the applicationId override,
+# installable next to a release app already on the phone.
 #
 # The job signs with the same debug keystore as the developer machine, taken
 # base64-encoded from the DEBUG_KEYSTORE_BASE64 repository secret. Signed with
