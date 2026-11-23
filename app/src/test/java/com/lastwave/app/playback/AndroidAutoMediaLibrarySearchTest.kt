@@ -5,7 +5,6 @@ import android.support.v4.media.MediaBrowserCompat
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
-import com.lastwave.app.R
 import com.lastwave.app.data.generate.GeneratedTrack
 import com.lastwave.app.data.local.SettingsPreferences
 import com.lastwave.app.data.local.db.DownloadedTrackDao
@@ -463,58 +462,6 @@ class AndroidAutoMediaLibrarySearchTest {
         assertEquals("♥ Remove from favorites", savedPlaylist.first().description.title.toString())
         val savedAlbums = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID, MusicPlayerState())
         assertEquals(listOf("Album One"), savedAlbums.map { it.description.title.toString() })
-    }
-
-    @Test
-    fun carPagesOpenWithAHomeRowExceptTheRootAndHomeItself() = runBlocking {
-        val library = AndroidAutoMediaLibrary(
-            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
-            playlistRepository = mockk(relaxed = true),
-            ytMusicLibraryManager = mockk(relaxed = true),
-            downloadedTrackDao = mockk(relaxed = true),
-            searchRepository = mockk(relaxed = true),
-            innerTube = mockk(relaxed = true),
-            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
-            artistRepository = mockk(relaxed = true),
-            statsRepository = mockk(relaxed = true),
-            moodsRepository = mockk(relaxed = true),
-            podcastRepository = mockk(relaxed = true),
-            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
-            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
-        )
-
-        // The root's rows are the tabs themselves: no Home row above them.
-        val root = library.loadCarChildren(AndroidAutoMediaLibrary.ROOT_ID, MusicPlayerState())
-        assertEquals(listOf("Home", "Recenti", "Sfoglia", "Libreria"), root.titles())
-
-        // Home itself never repeats the row that would open it.
-        val home = library.loadCarChildren(AndroidAutoMediaLibrary.HOME_ID, MusicPlayerState())
-        assertFalse(home.any { it.description.mediaId == AndroidAutoMediaLibrary.HOME_ID })
-
-        // Any other page, top level or nested, opens with one tap back to Home:
-        // the blue LastWave mark alone, no label, and not a playable row.
-        val libraryPage = library.loadCarChildren(AndroidAutoMediaLibrary.LIBRARY_ID, MusicPlayerState())
-        val homeRow = libraryPage.first()
-        assertEquals(AndroidAutoMediaLibrary.HOME_ID, homeRow.description.mediaId)
-        assertTrue(homeRow.isBrowsable)
-        assertFalse(homeRow.isPlayable)
-        assertEquals("", homeRow.description.title.toString())
-        assertEquals("", homeRow.description.subtitle.toString())
-        assertEquals(
-            "android.resource://com.lastwave.app/${R.drawable.ic_car_home_logo}",
-            homeRow.description.iconUri.toString(),
-        )
-        assertEquals(listOf("", "Playlist", "Album salvati", "Artisti"), libraryPage.titles())
-        assertEquals(
-            listOf(""),
-            library.loadCarChildren(AndroidAutoMediaLibrary.LIBRARY_ALBUMS_ID, MusicPlayerState()).titles(),
-        )
-
-        // The phone lists built on the same rows (the OriginOS card) stay plain.
-        assertFalse(
-            library.loadChildren(AndroidAutoMediaLibrary.PLAYLISTS_ID, MusicPlayerState())
-                .any { it.description.mediaId == AndroidAutoMediaLibrary.HOME_ID },
-        )
     }
 
     @Test

@@ -153,7 +153,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         )
     val downloadChanges get() = downloadedTrackDao.getAll()
 
-    /** Rows of one node. [loadCarChildren] adds the car-only Home row on top. */
+    /** Rows of one node. The car walks back up with its own arrow, one tap per level. */
     suspend fun loadChildren(parentId: String, state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> {
         val children = when {
             parentId == ROOT_ID -> rootItems()
@@ -255,20 +255,6 @@ class AndroidAutoMediaLibrary @Inject constructor(
         // The rows a favorite action flips when it is browsed (see favoriteActionItem).
         synchronized(pageCache) { pageCache[parentId] = children }
         return children
-    }
-
-    /**
-     * The page Android Auto shows for [parentId]: the rows plus a Home row.
-     * The car draws the app's tabs only at the root, so without it leaving a
-     * submenu means walking the back stack one level per tap.
-     */
-    suspend fun loadCarChildren(
-        parentId: String,
-        state: MusicPlayerState,
-    ): List<MediaBrowserCompat.MediaItem> {
-        val children = loadChildren(parentId, state)
-        return if (parentId == ROOT_ID || parentId == HOME_ID) children
-        else listOf(homeRow()) + children
     }
 
     suspend fun search(query: String): List<MediaBrowserCompat.MediaItem> {
@@ -704,16 +690,6 @@ class AndroidAutoMediaLibrary @Inject constructor(
             .build(),
         if (browsable) MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
         else MediaBrowserCompat.MediaItem.FLAG_PLAYABLE,
-    )
-
-    /** One tap from any page back to the main page: the app's blue mark
-     *  alone, with no label, so the row reads as LastWave instead of another
-     *  collection. The system back arrow still walks one level up at a time. */
-    private fun homeRow() = browsableItem(
-        mediaId = HOME_ID,
-        title = "",
-        subtitle = "",
-        iconUri = carLogoUri(),
     )
 
     private fun cacheTracks(tracks: List<PlayableTrack>): String {
@@ -1954,11 +1930,6 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private fun appIconUri(): Uri = Uri.parse(
         "android.resource://${context.packageName}/${com.lastwave.app.R.drawable.ic_car_attribution}",
     )
-
-    /** The blue LastWave mark: the same four bars as the launcher icon, on
-     *  the debug icon's blue field. The car Home row shows it without text. */
-    private fun carLogoUri(): String =
-        "android.resource://${context.packageName}/${com.lastwave.app.R.drawable.ic_car_home_logo}"
 
     private fun trackCountLabel(count: Int) = if (count == 1) "1 track" else "$count tracks"
 

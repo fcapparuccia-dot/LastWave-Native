@@ -443,7 +443,7 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
         scope.launch {
             val children = runCatching {
                 withContext(Dispatchers.IO) {
-                    androidAutoLibrary.loadCarChildren(parentId, musicPlayer.state.value)
+                    androidAutoLibrary.loadChildren(parentId, musicPlayer.state.value)
                 }
             }.onFailure { error ->
                 android.util.Log.w("MusicPlaybackService", "Android Auto browse failed for $parentId", error)

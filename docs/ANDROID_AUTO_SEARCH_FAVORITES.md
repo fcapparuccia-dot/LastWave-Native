@@ -148,23 +148,12 @@ salvare un'altra raccolta. Dopo il tap il servizio notifica **Preferiti**,
 **Album salvati**, **Libreria**, **Home** e la pagina di partenza, così il cuore
 è già rosso e le liste si aggiornano.
 
-## Riga Home
+## Navigazione tra le pagine
 
 Android Auto mostra le schede dell'app (Home, Recenti, Sfoglia, Libreria) solo
-alla radice: dentro un sottomenu resta la freccia indietro, un livello per tap.
-Per questo `loadCarChildren` antepone a **ogni** pagina tranne la radice e la
-Home una riga che riapre la scheda Home con un tap (`category:home`,
-sfogliabile). La riga non porta testo: mostra solo l'icona blu di LastWave
-(`ic_car_home_logo`, il marchio su campo `#2979FF` dell'icona debug), così la
-posizione in alto a sinistra è il logo dell'app e non l'ennesima voce di
-libreria. La freccia indietro dell'host continua a salire di un livello per
-tap. La riga non compare nelle liste telefono che riusano lo stesso albero
-(`loadChildren`, usato dalla scheda musicale OriginOS).
-
-La schermata di riproduzione dell'auto non è pilotabile dall'app: una custom
-action della sessione non può cambiare la pagina sfogliata dall'host, quindi il
-ritorno veloce alla Home è questa riga, raggiungibile con la freccia che
-riporta alla pagina di partenza.
+alla radice. Dentro un sottomenu si torna indietro esclusivamente con la freccia
+dell'host, un livello per tap: l'app non antepone più una riga Home a ogni
+pagina, quindi ogni pagina contiene solo le proprie voci.
 
 ## Azione "Artist radio" in riproduzione
 
@@ -209,8 +198,7 @@ ridisegnata dall'host) appena la coda diventa una radio o smette di esserlo.
 - `app/src/main/java/com/lastwave/app/data/playlist/CarMediaFavorites.kt` —
   modello e persistenza DataStore.
 - `app/src/test/java/com/lastwave/app/playback/AndroidAutoMediaLibrarySearchTest.kt` —
-  test di ordine dei risultati, salvataggio di un album, schede della radice e
-  avvio radio.
+  test di ordine dei risultati, salvataggio di un album e avvio radio.
 - `app/src/test/java/com/lastwave/app/data/playlist/RecentPlaylistStoreTest.kt` —
   test di deduplicazione, copertina di ripiego e limite di 12 voci.
 - `app/src/test/java/com/lastwave/app/data/playlist/CarMediaFavoritesTest.kt` —
