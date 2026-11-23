@@ -140,6 +140,7 @@ jobs:
           ./gradlew :app:testDebugUnitTest
           --tests 'com.lastwave.app.data.playlist.CarMediaFavoritesTest'
           --tests 'com.lastwave.app.playback.AndroidAutoMediaLibrarySearchTest'
+          --tests 'com.lastwave.app.data.music.ChartCardsParserTest'
           --stacktrace
 
       - name: Upload test results

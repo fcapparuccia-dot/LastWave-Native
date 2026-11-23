@@ -173,3 +173,17 @@ restare: serve a reinstallare senza riscaricare.
   manuale né l'uninstall per aggiornare il telefono.
 
 Contesto e cronologia della firma: [`docs/side-by-side-debug-build.md`](side-by-side-debug-build.md) §6 e §7.
+
+## Stato verificato — 23 novembre 2026
+
+- run `45196399454` sul commit `504e897e`: `conclusion=success`, step *Car library
+  unit tests* verde, `SIGNER.txt` con `05e3717a…` sulle due righe e hash dell'APK
+  uguale a `SHA256SUMS.txt` (`cc63fbc1…`);
+- installato **così com'è** sul `motorola_edge_60` (`ZY22LJS7N3`): `adb install -r`
+  → `Success`, `base.apk` della stessa dimensione del file scaricato (143818164
+  byte), `versionName 5.2.3`, `signatures:[75953fef]` e `ceDataInode 580969`
+  invariati (dati conservati), `MainShellActivity` in primo piano e nessun FATAL
+  nuovo nel buffer crash;
+- su quel PC `adb` non era installato: `platform-tools` (adb 37.0.3) scaricato in
+  `%TEMP%\platform-tools`. Al primo collegamento il telefono risulta `unauthorized`
+  finché non si accetta il popup «Consenti debug USB» (spunta «Ricorda»).
