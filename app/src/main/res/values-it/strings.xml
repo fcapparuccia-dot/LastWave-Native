@@ -1448,5 +1448,15 @@
     <string name="spotify_playlists_section_title">Spotify</string>
     <string name="spotify_liked_songs_title">Brani che ti piacciono</string>
     <string name="spotify_liked_songs_sub">I tuoi mi piace di Spotify</string>
+    <!-- Radio FM -->
+    <string name="radio_fm_title">Radio FM</string>
+    <string name="radio_fm_sub">Stazioni FM italiane in diretta</string>
+    <string name="radio_fm_library">Radio FM</string>
+    <string name="radio_fm_library_sub">Stazioni FM italiane in diretta</string>
+    <string name="radio_fm_search_hint">Cerca stazione</string>
+    <string name="radio_fm_clear_search">Cancella ricerca</string>
+    <string name="radio_fm_refresh">Aggiorna stazioni</string>
+    <string name="radio_fm_empty">Nessuna stazione disponibile. Controlla la connessione e riprova.</string>
+    <string name="radio_fm_no_results">Nessuna stazione corrisponde alla ricerca.</string>
 </resources>
 

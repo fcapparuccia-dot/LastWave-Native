@@ -25,11 +25,13 @@ class RadioFmViewModel @Inject constructor(
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
-    fun refresh() {
+    /** [forceRefresh] ignora la cache del repository e rilegge la directory. */
+    fun refresh(forceRefresh: Boolean = false) {
+        if (_loading.value) return
         viewModelScope.launch {
             _loading.value = true
             try {
-                _stations.value = radioRepository.getItalianStations()
+                _stations.value = radioRepository.getItalianStations(forceRefresh = forceRefresh)
             } finally {
                 _loading.value = false
             }

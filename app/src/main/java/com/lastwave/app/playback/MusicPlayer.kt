@@ -2853,7 +2853,7 @@ class MusicPlayer @Inject constructor(
                         logStreamEvent("player-prepare", it, retry = 0)
                         cacheCurrentTrackStream(it)
                     }
-                    if (selectedTrack.playbackUrl != null) {
+                    if (selectedTrack.playbackUrl != null && selectedTrack.isLocalTrack()) {
                         applicationScope.launch(Dispatchers.IO) { publishLocalTrackQuality(selectedTrack) }
                     }
                     val learnedVideoId = resolved?.youtubeCandidate?.videoId?.takeIf { it.isNotBlank() }

@@ -12,32 +12,55 @@ import kotlinx.serialization.json.JsonArray
 /**
  * Repository per le stazioni FM dalla directory radio-browser.info.
  *
- * Non c'è cache su disco: ogni apertura rilegge la directory, così telefono e
- * auto vedono lo stato online/offline aggiornato. Qualsiasi errore di rete o di
- * parsing degrada a una lista vuota (la UI non mostra errore, solo niente da
- * riprodurre).
+ * La directory contiene oltre un migliaio di stazioni italiane: rileggerle a
+ * ogni apertura della schermata costerebbe centinaia di KB, quindi la lista
+ * resta in memoria per [CACHE_TTL_MS]. Un errore di rete non svuota una lista
+ * già caricata (la schermata continua a mostrare le stazioni finché un refresh
+ * esplicito non le aggiorna).
  */
 @Singleton
 class RadioRepository @Inject constructor(
     private val api: RadioApiService,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val cacheLock = Any()
+    private var cachedStations: List<RadioStation> = emptyList()
+    private var cachedAtMs = 0L
 
     private companion object {
         const val TAG = "RadioRepository"
         const val DEFAULT_COUNTRY = "IT"
-        const val LIMIT = 50
+        /** Copre tutte le stazioni italiane funzionanti elencate dalla directory. */
+        const val LIMIT = 1000
+        const val CACHE_TTL_MS = 10 * 60 * 1000L
     }
 
-    /** Stazioni italiane ordinate per popolarità (voti). */
-    suspend fun getItalianStations(): List<RadioStation> =
-        getStations(countryCode = DEFAULT_COUNTRY)
+    /** Stazioni italiane ordinate per ascolti (i network nazionali in cima). */
+    suspend fun getItalianStations(forceRefresh: Boolean = false): List<RadioStation> =
+        getStations(countryCode = DEFAULT_COUNTRY, forceRefresh = forceRefresh)
 
     /** Stazioni per un codice paese ISO 3166-1 alpha-2. */
-    suspend fun getStations(countryCode: String): List<RadioStation> = withContext(Dispatchers.IO) {
+    suspend fun getStations(
+        countryCode: String,
+        forceRefresh: Boolean = false,
+    ): List<RadioStation> = withContext(Dispatchers.IO) {
+        if (!forceRefresh) {
+            val cached = synchronized(cacheLock) {
+                cachedStations.takeIf {
+                    it.isNotEmpty() && System.currentTimeMillis() - cachedAtMs < CACHE_TTL_MS
+                }
+            }
+            if (cached != null) return@withContext cached
+        }
         val params = mapOf(
             "countrycode" to countryCode,
-            "order" to "votes",
+            // Senza hidebroken la directory restituisce anche le stazioni che
+            // l'ultimo controllo ha trovato morte: l'elenco si riempie di stream
+            // che non possono partire.
+            "hidebroken" to "true",
+            // Gli ascolti mettono davanti i network realmente usati; l'ordine
+            // per voti lasciava in cima stazioni vecchie o duplicate.
+            "order" to "clickcount",
             "reverse" to "true",
             "format" to "json",
             "limit" to LIMIT.toString(),
@@ -49,24 +72,41 @@ class RadioRepository @Inject constructor(
                 emptyList()
             } else {
                 val body = response.body()?.string().orEmpty()
-                if (body.isBlank()) {
-                    emptyList()
-                } else {
-                    val element = json.parseToJsonElement(body)
-                    if (element is JsonArray) {
-                        element.map { json.decodeFromString(RadioStation.serializer(), it.toString()) }
-                    } else {
-                        emptyList()
-                    }
-                }
+                decodeRadioStations(json, body)
             }
         }.onFailure { error ->
             Log.w(TAG, "Failed to fetch radio stations for $countryCode", error)
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).also { stations ->
+            if (stations.isNotEmpty()) {
+                synchronized(cacheLock) {
+                    cachedStations = stations
+                    cachedAtMs = System.currentTimeMillis()
+                }
+            }
+        }
     }
 
     /** Trova una stazione dal suo URL di stream (usato da Android Auto per riprendere una stazione). */
     suspend fun findStationByUrl(stations: List<RadioStation>, streamUrl: String): RadioStation? =
         stations.firstOrNull { it.playableUrl.equals(streamUrl, ignoreCase = true) }
             ?: stations.firstOrNull { it.url.equals(streamUrl, ignoreCase = true) }
+}
+
+/**
+ * Decodifica il body JSON della directory tenendo solo stream suonabili: una
+ * voce malformata non azzera l'elenco, le stazioni che l'ultimo controllo ha
+ * trovato morte vengono scartate e i duplicati dello stesso stream (bitrate o
+ * URL alternativi dello stesso network) restano una riga sola.
+ */
+internal fun decodeRadioStations(json: Json, body: String): List<RadioStation> {
+    if (body.isBlank()) return emptyList()
+    val element = runCatching { json.parseToJsonElement(body) }.getOrNull()
+    if (element !is JsonArray) return emptyList()
+    return element.mapNotNull { entry ->
+        runCatching {
+            json.decodeFromString(RadioStation.serializer(), entry.toString())
+        }.getOrNull()
+    }
+        .filter { it.lastCheckOk != 0 }
+        .distinctBy { "${it.name.trim().lowercase()}|${it.playableUrl}" }
 }

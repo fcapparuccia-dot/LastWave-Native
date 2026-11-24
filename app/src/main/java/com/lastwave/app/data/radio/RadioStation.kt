@@ -46,20 +46,30 @@ data class RadioStation(
     val playableUrl: String
         get() = urlResolved?.takeIf { it.isNotBlank() } ?: url
 
+    /** True quando lo stream è una playlist HLS e non un flusso progressivo. */
+    val isHlsStream: Boolean
+        get() = hls == 1 || playableUrl.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+
     /**
      * MIME valido per ExoPlayer. La directory fornisce "MP3"/"AAC"/…: "audio/mp3"
      * non è un MIME standard e faceva fallire la creazione del MediaItem, quindi
      * i codec noti vengono mappati e gli altri lasciano che ExoPlayer lo inferisca.
+     * HLS va riconosciuto prima del codec: la directory lo segnala con hls=1 e
+     * spesso riporta codec AAC o UNKNOWN, che produrrebbe un MIME audio su una
+     * playlist e farebbe partire lo stream come file progressivo.
      */
     val mimeType: String?
-        get() = when (codec?.trim()?.uppercase()) {
-            "MP3" -> "audio/mpeg"
-            "AAC", "AAC+", "AACPLUS" -> "audio/aac"
-            "OGG", "OGG VORBIS", "VORBIS" -> "audio/ogg"
-            "OPUS" -> "audio/opus"
-            "FLAC" -> "audio/flac"
-            "HLS" -> "application/x-mpegURL"
-            else -> null
+        get() {
+            if (isHlsStream) return "application/x-mpegURL"
+            return when (codec?.trim()?.uppercase()) {
+                "MP3" -> "audio/mpeg"
+                "AAC", "AAC+", "AACPLUS" -> "audio/aac"
+                "OGG", "OGG VORBIS", "VORBIS" -> "audio/ogg"
+                "OPUS" -> "audio/opus"
+                "FLAC" -> "audio/flac"
+                "HLS" -> "application/x-mpegURL"
+                else -> null
+            }
         }
 
     /** Genere/tag accorciato per la UI. */

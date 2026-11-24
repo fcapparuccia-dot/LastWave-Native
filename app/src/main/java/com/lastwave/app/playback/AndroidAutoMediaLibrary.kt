@@ -1124,6 +1124,9 @@ class AndroidAutoMediaLibrary @Inject constructor(
     /** One row per Italian FM station from the directory; tap starts the stream. */
     private suspend fun radioItems(): List<MediaBrowserCompat.MediaItem> {
         val stations = runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
+            // La browse list dell'auto arriva tutta in un colpo via IPC: mille
+            // righe bloccano la UI dell'auto. La schermata telefono le mostra tutte.
+            .take(MAX_BROWSE_RADIO)
         return stations.map { station ->
             playableItem(
                 mediaId = "$RADIO_STATION_PREFIX${encodeEntityId(station.playableUrl)}",
@@ -2077,6 +2080,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val MAX_BROWSE_PLAYLISTS = 40
         private const val MAX_BROWSE_ARTISTS = 30
         private const val MAX_BROWSE_PODCASTS = 40
+/** Radio: la UI dell'auto non regge le ~1000 stazioni della directory IT. */
+private const val MAX_BROWSE_RADIO = 100
         private const val MOOD_CACHE_MS = 60 * 60 * 1000L
         private const val MOOD_NETWORK_BUDGET_MS = 8_000L
         private const val MOOD_CATEGORY_BUDGET_MS = 10_000L
