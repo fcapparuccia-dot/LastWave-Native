@@ -1,7 +1,9 @@
 package com.lastwave.app.data.feed
 
+import android.content.Context
 import androidx.compose.runtime.Immutable
 import com.lastwave.app.data.artwork.ArtworkNormalizer
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.lastwave.app.util.ArtistHelper
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -130,6 +132,7 @@ data class FeedData(
 
 @Singleton
 class FeedRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val innerTube: InnerTubeMusicApi,
     private val recommendationRepository: RecommendationRepository,
     private val homeRepository: HomeRepository,
@@ -860,6 +863,15 @@ class FeedRepository @Inject constructor(
                     subtitle = "Fresh drops",
                     artworkUrl = newReleases.firstOrNull()?.artworkUrl,
                     collection = "new_releases",
+                ),
+            )
+            // 7. Radio FM — live FM stations from the directory.
+            add(
+                FeedQuickTile(
+                    title = context.getString(com.lastwave.app.R.string.radio_fm_title),
+                    subtitle = context.getString(com.lastwave.app.R.string.radio_fm_sub),
+                    artworkUrl = null,
+                    collection = "radio_fm",
                 ),
             )
         }

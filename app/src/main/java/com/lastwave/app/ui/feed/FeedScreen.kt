@@ -207,6 +207,7 @@ fun FeedScreen(
     onOpenPodcasts: () -> Unit = {},
     onOpenPodcastShow: (String) -> Unit = {},
     onOpenYouTubeLogin: () -> Unit = {},
+    onOpenRadioFm: () -> Unit = {},
     feedTapEvents: SharedFlow<Unit>? = null,
     viewModel: FeedViewModel = hiltViewModel(),
     artistAlbumNavigator: ArtistAlbumNavigator = hiltViewModel<ArtistAlbumNavBridgeFeed>().navigator,
@@ -922,6 +923,7 @@ fun FeedScreen(
                                                 tile.collection == "yt_liked" || tile.playlistId == "yt_liked" -> onOpenFeedPlaylist("yt_liked")
                                                 tile.collection == "yt_recent" || tile.playlistId == "yt_recent" -> onOpenFeedPlaylist("yt_recent")
                                                 tile.collection == "new_releases" -> onOpenNewReleases()
+                                                tile.collection == "radio_fm" -> onOpenRadioFm()
                                                 tile.localPlaylistId != null -> onOpenPlaylist(tile.localPlaylistId)
                                                 tile.playlistId != null -> onOpenFeedPlaylist(tile.playlistId)
                                                 else -> viewModel.handleQuickTileClick(tile)

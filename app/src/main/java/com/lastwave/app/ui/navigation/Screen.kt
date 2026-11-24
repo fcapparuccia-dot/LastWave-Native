@@ -42,6 +42,7 @@ sealed class Screen(val route: String) {
     data object ExternalPlaylistImport : Screen("external_playlist_import")
     data object NewReleases : Screen("new_releases")
     data object Podcasts : Screen("podcasts")
+    data object RadioFm : Screen("radio_fm")
     data object PodcastShow : Screen("podcast_show/{showId}") {
         fun createRoute(showId: String) = "podcast_show/${encodeArg(showId)}"
     }

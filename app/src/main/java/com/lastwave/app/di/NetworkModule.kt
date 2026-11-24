@@ -4,6 +4,8 @@ import android.content.Context
 import com.lastwave.app.BuildConfig
 import com.lastwave.app.data.network.LastFmApiService
 import com.lastwave.app.data.network.LastFmRateGuard
+import com.lastwave.app.data.radio.RadioApiService
+import com.lastwave.app.data.radio.RadioRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -165,4 +167,22 @@ object NetworkModule {
     @Singleton
     fun provideLastFmApiService(retrofit: Retrofit): LastFmApiService =
         retrofit.create(LastFmApiService::class.java)
+
+    @Provides
+    @Singleton
+    fun provideRadioRetrofit(client: OkHttpClient): Retrofit =
+        Retrofit.Builder()
+            .baseUrl(RadioApiService.BASE_URL)
+            .client(client)
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideRadioApiService(retrofit: Retrofit): RadioApiService =
+        retrofit.create(RadioApiService::class.java)
+
+    @Provides
+    @Singleton
+    fun provideRadioRepository(api: RadioApiService, client: OkHttpClient): RadioRepository =
+        RadioRepository(api, client)
 }

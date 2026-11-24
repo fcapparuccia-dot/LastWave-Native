@@ -35,6 +35,7 @@ import com.lastwave.app.ui.settings.SettingsScreen
 import com.lastwave.app.ui.search.SearchScreen
 import com.lastwave.app.ui.discover.DiscoverScreen
 import com.lastwave.app.ui.genres.GenresScreen
+import com.lastwave.app.ui.radio.RadioFmScreen
 import com.lastwave.app.ui.shell.MainShell
 import com.lastwave.app.ui.common.PredictiveBackScreen
 import com.lastwave.app.ui.common.ExpressiveLoadingIndicator
@@ -321,6 +322,9 @@ fun LastWaveNavHost(
                 },
                 onOpenPodcastShow = { showId ->
                     navController.navigate(Screen.PodcastShow.createRoute(showId))
+                },
+                onOpenRadioFm = {
+                    navController.navigate(Screen.RadioFm.route)
                 },
                 onOpenYouTubeLogin = {
                     navController.navigate(Screen.YouTubeLogin.route)
@@ -738,6 +742,12 @@ fun LastWaveNavHost(
                         navController.navigate(Screen.ArtistDetail.createRoute(name, id))
                     },
                 )
+            }
+        }
+
+        composable(Screen.RadioFm.route) { backStackEntry ->
+            PredictiveBackScreen(onBack = { navController.safePopBackStack(backStackEntry) }) {
+                RadioFmScreen()
             }
         }
 

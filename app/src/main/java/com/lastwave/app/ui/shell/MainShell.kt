@@ -252,6 +252,7 @@ fun MainShell(
     onOpenDownloads: () -> Unit = {},
     onOpenPodcasts: () -> Unit = {},
     onOpenPodcastShow: (String) -> Unit = {},
+    onOpenRadioFm: () -> Unit = {},
     onOpenYouTubeLogin: () -> Unit = {},
     onReturnToHome: () -> Boolean = { false },
     mainShellViewModel: MainShellViewModel = hiltViewModel(),
@@ -443,6 +444,7 @@ fun MainShell(
                             onOpenDownloads = onOpenDownloads,
                             onOpenPodcasts = onOpenPodcasts,
                             onOpenPodcastShow = onOpenPodcastShow,
+                            onOpenRadioFm = onOpenRadioFm,
                             onOpenYouTubeLogin = onOpenYouTubeLogin,
                             feedTapEvents = feedTapEvents,
                         )
