@@ -67,18 +67,10 @@ fun RadioFmScreen(
     }
 
     // La directory elenca centinaia di stazioni: senza filtro trovare un
-    // network preciso richiede uno scroll lunghissimo.
+    // network preciso richiede uno scroll lunghissimo. Lo stesso filtro serve
+    // alla ricerca Android Auto, che non ha una casella dentro la lista.
     val visibleStations = remember(stations, query) {
-        val needle = query.trim()
-        if (needle.isEmpty()) {
-            stations
-        } else {
-            stations.filter { station ->
-                station.name.contains(needle, ignoreCase = true) ||
-                    station.tags?.contains(needle, ignoreCase = true) == true ||
-                    station.locationDisplay.contains(needle, ignoreCase = true)
-            }
-        }
+        stations.filter { station -> station.matchesSearch(query) }
     }
 
     Scaffold(

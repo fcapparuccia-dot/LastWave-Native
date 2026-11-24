@@ -8,8 +8,9 @@ Auto **non sono ancora state eseguite**.
 
 ## Comportamento aggiunto
 
-- La ricerca Android Auto mostra prima le categorie disponibili: **Albums**,
-  **Playlists**, **Radio**; poi mostra i risultati dei singoli brani.
+- La ricerca Android Auto mostra prima le categorie disponibili: **Radio FM**
+  (solo se il testo nomina almeno una stazione), **Albums**, **Playlists**,
+  **Radio**; poi mostra i risultati dei singoli brani.
 - Album e playlist aprono una pagina con i brani, l'azione
   **Riproduzione casuale** e l'azione **♡ Save to favorites**. Se già salvati,
   l'azione diventa **♥ Remove from favorites**.
@@ -36,6 +37,31 @@ Sopra i brani, accanto al cuore, ogni pagina di playlist o album espone
 **Riproduzione casuale**: avvia l'intera raccolta con `playQueue(startShuffled =
 true)` — per le playlist salvate con il loro id, per le raccolte già in cache con
 il token dei brani.
+
+## Ricerca delle stazioni FM
+
+Android Auto non offre una casella di testo dentro una lista sfogliabile: la
+lente dell'host è l'unica ricerca, e riporta i risultati di
+`MediaBrowserServiceCompat.onSearch`, richiamato mentre si digita. La lista
+**Radio FM** quindi non ha — e non può avere — un campo di ricerca proprio: le
+stazioni si cercano dalla stessa lente che cerca brani, album e playlist.
+
+`AndroidAutoMediaLibrary.search()` filtra la directory con
+`RadioStation.matchesSearch()` (nome, tag e posizione: lo stesso filtro della
+schermata `ui/radio/RadioFmScreen.kt`) e, se trova qualcosa, antepone ai
+risultati una cartella **Radio FM** con il numero di stazioni trovate. La
+cartella ha id `search:stations:<query in base64>`, quindi si riapre anche dopo
+un riavvio del servizio, e le sue righe sono le stesse della lista FM
+(`radioStationItem`, cuore compreso) con l'id `radio-station:<url in base64>`
+che `playMediaId` avvia già con `sourceLabel = "Radio FM"`.
+
+La ricerca copre **tutta** la directory (`RadioRepository`, cache di 10 minuti),
+non solo le `MAX_BROWSE_RADIO` (100) stazioni che la lista FM mostra per non
+bloccare l'IPC dell'auto: è il modo per raggiungere una stazione che nella lista
+non compare. La cartella ne elenca al massimo `MAX_SEARCH_RADIO_STATIONS` (50).
+Se la directory non è ancora in cache la richiesta parte in parallelo alle altre
+tre della ricerca e resta dentro `SEARCH_NETWORK_BUDGET_MS` (6 s): se scade, la
+lente mostra comunque album, playlist e brani.
 
 ## Layout a schede come Spotify
 

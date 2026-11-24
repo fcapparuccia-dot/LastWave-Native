@@ -85,4 +85,16 @@ data class RadioStation(
             state?.takeIf { it.isNotBlank() },
             countryCode?.takeIf { it.isNotBlank() },
         ).joinToString(", ")
+
+    /**
+     * Filtro unico della lista radio: la schermata telefono e la ricerca in
+     * Android Auto devono trovare le stesse stazioni per lo stesso testo.
+     */
+    fun matchesSearch(query: String): Boolean {
+        val needle = query.trim()
+        if (needle.isEmpty()) return true
+        return name.contains(needle, ignoreCase = true) ||
+            tags?.contains(needle, ignoreCase = true) == true ||
+            locationDisplay.contains(needle, ignoreCase = true)
+    }
 }

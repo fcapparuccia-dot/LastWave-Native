@@ -24,6 +24,7 @@ import com.lastwave.app.data.podcast.PodcastRepository
 import com.lastwave.app.data.podcast.toPlayableTrack
 import com.lastwave.app.data.radio.RadioFavoritesRepository
 import com.lastwave.app.data.radio.RadioRepository
+import com.lastwave.app.data.radio.RadioStation
 import com.lastwave.app.data.radio.toPlayableTrack as toRadioStationTrack
 import com.lastwave.app.data.playlist.CarMediaFavorite
 import com.lastwave.app.data.playlist.CarMediaFavorites
@@ -97,6 +98,16 @@ class AndroidAutoMediaLibrary @Inject constructor(
         val tracks: List<PlayableTrack>,
         val albums: List<SearchResultItem>,
         val playlists: List<SearchResultItem>,
+    )
+
+    /** Everything the car search resolves in parallel: the station matches are
+     *  the only hits a warm radio directory answers without waiting for a
+     *  network round trip. */
+    private data class SearchHits(
+        val tracks: List<PlayableTrack>,
+        val albums: List<SearchResultItem>,
+        val playlists: List<SearchResultItem>,
+        val stations: List<RadioStation>,
     )
 
     /** What the car shows for one artist: YouTube Music's ranked popular songs,
@@ -258,6 +269,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             parentId.startsWith(SEARCH_PLAYLISTS_PREFIX) -> searchPlaylistItems(parentId)
             parentId.startsWith(SEARCH_ALBUM_PREFIX) -> searchAlbumChildren(parentId)
             parentId.startsWith(SEARCH_PLAYLIST_PREFIX) -> searchPlaylistChildren(parentId)
+            parentId.startsWith(SEARCH_STATIONS_PREFIX) -> searchStationItems(parentId)
             parentId.startsWith(SEARCH_RADIO_PREFIX) -> searchRadioChildren(parentId)
             parentId.startsWith(FAVORITE_ACTION_PREFIX) -> favoriteActionChildren(parentId, state)
             else -> emptyList()
@@ -281,7 +293,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
         } catch (_: Exception) {
             emptyList()
         }
-        val (remote, albums, remotePlaylists) = coroutineScope {
+        val (remote, albums, remotePlaylists, stations) = coroutineScope {
             val tracksRequest = async { bounded(SEARCH_NETWORK_BUDGET_MS) { searchTracks(cleanQuery) }.orEmpty() }
             val albumsRequest = async {
                 bounded(SEARCH_NETWORK_BUDGET_MS) { searchRepository.search(SearchTab.ALBUMS, cleanQuery) }.orEmpty()
@@ -289,7 +301,15 @@ class AndroidAutoMediaLibrary @Inject constructor(
             val playlistsRequest = async {
                 bounded(SEARCH_NETWORK_BUDGET_MS) { searchRepository.search(SearchTab.PLAYLISTS, cleanQuery) }.orEmpty()
             }
-            Triple(tracksRequest.await(), albumsRequest.await(), playlistsRequest.await())
+            // Le stazioni arrivano dalla directory già in cache: chi cerca dalla
+            // lista Radio FM le vede subito, senza aspettare InnerTube.
+            val stationsRequest = async { radioStationMatches(cleanQuery) }
+            SearchHits(
+                tracks = tracksRequest.await(),
+                albums = albumsRequest.await(),
+                playlists = playlistsRequest.await(),
+                stations = stationsRequest.await(),
+            )
         }
         val (albumsWithTracks, playlistsWithTracks) = coroutineScope {
             val albumsRequest = async {
@@ -341,10 +361,23 @@ class AndroidAutoMediaLibrary @Inject constructor(
         if (tracks.isNotEmpty()) synchronized(searchQueues) { searchQueues[pageToken] = tracks }
         android.util.Log.d(
             "AndroidAutoMediaLibrary",
-            "Car search \"$cleanQuery\": ${page.albums.size} albums, ${page.playlists.size} playlists, ${remote.size} remote tracks, ${local.size} local tracks",
+            "Car search \"$cleanQuery\": ${page.albums.size} albums, ${page.playlists.size} playlists, " +
+                "${stations.size} stations, ${remote.size} remote tracks, ${local.size} local tracks",
         )
 
         return buildList {
+            // Android Auto non ha una casella di ricerca dentro una lista: la
+            // lente è l'unica, e le stazioni che rispondono al testo stanno in
+            // cima (anche quelle oltre le MAX_BROWSE_RADIO della lista FM).
+            if (stations.isNotEmpty()) {
+                add(
+                    browsableItem(
+                        mediaId = "$SEARCH_STATIONS_PREFIX${encodeEntityId(cleanQuery)}",
+                        title = "Radio FM",
+                        subtitle = countLabel(stations.size, "stazione", "stazioni"),
+                    ),
+                )
+            }
             if (page.albums.isNotEmpty()) {
                 add(browsableItem("$SEARCH_ALBUMS_PREFIX$pageToken", "Albums", "${page.albums.size} results"))
             }
@@ -1145,20 +1178,37 @@ class AndroidAutoMediaLibrary @Inject constructor(
     }
 
     /** One row per Italian FM station from the directory; tap starts the stream. */
-    private suspend fun radioItems(): List<MediaBrowserCompat.MediaItem> {
-        val favoriteIds = radioFavorites.favoriteIds.value
-        val stations = runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
+    private suspend fun radioItems(): List<MediaBrowserCompat.MediaItem> =
+        runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
             // La browse list dell'auto arriva tutta in un colpo via IPC: mille
             // righe bloccano la UI dell'auto. La schermata telefono le mostra tutte.
             .take(MAX_BROWSE_RADIO)
-        return stations.map { station ->
-            val track = station.toRadioStationTrack()
-            playableItem(
-                mediaId = "$RADIO_STATION_PREFIX${encodeEntityId(station.playableUrl)}",
-                track = track,
-                subtitle = if (station.stationUuid in favoriteIds) "♥ ${track.artist}" else track.artist,
-            )
-        }
+            .map(::radioStationItem)
+
+    /** Le stazioni che rispondono al testo della lente: tutta la directory,
+     *  non solo le prime [MAX_BROWSE_RADIO] che la lista FM può mostrare. */
+    private suspend fun radioStationMatches(query: String): List<RadioStation> =
+        bounded(SEARCH_NETWORK_BUDGET_MS) { radioRepository.getItalianStations() }
+            .orEmpty()
+            .filter { it.matchesSearch(query) }
+            .take(MAX_SEARCH_RADIO_STATIONS)
+
+    /** La cartella aperta dalla lente: la query viaggia in base64 nell'id, così
+     *  la pagina si riapre senza ricordare la ricerca precedente. */
+    private suspend fun searchStationItems(parentId: String): List<MediaBrowserCompat.MediaItem> {
+        val query = decodeEntityId(parentId.removePrefix(SEARCH_STATIONS_PREFIX)) ?: return emptyList()
+        return radioStationMatches(query).map(::radioStationItem)
+    }
+
+    /** La stessa riga nella lista FM e fra i risultati della lente. */
+    private fun radioStationItem(station: RadioStation): MediaBrowserCompat.MediaItem {
+        val track = station.toRadioStationTrack()
+        val saved = station.stationUuid in radioFavorites.favoriteIds.value
+        return playableItem(
+            mediaId = "$RADIO_STATION_PREFIX${encodeEntityId(station.playableUrl)}",
+            track = track,
+            subtitle = if (saved) "♥ ${track.artist}" else track.artist,
+        )
     }
 
     /** Le stazioni col cuore: stesso id URL della lista FM, quindi si riprendono offline. */
@@ -2058,6 +2108,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val SEARCH_PLAYLIST_PREFIX = "search:playlist:"
         private const val SEARCH_RADIO_PREFIX = "search:radio:"
         private const val SEARCH_RADIO_PLAY_PREFIX = "search:radio-play:"
+        /** Cartella Radio FM nei risultati della lente: prefisso + query in base64. */
+        private const val SEARCH_STATIONS_PREFIX = "search:stations:"
         private const val FAVORITE_ITEM_PREFIX = "favorite-item:"
         private const val SAVED_PLAYLIST_RESULT_PREFIX = "saved_playlist:"
         private const val SAVED_PLAYLIST_FAVORITE_TYPE = "saved_playlist"
@@ -2110,8 +2162,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
         private const val MAX_BROWSE_PLAYLISTS = 40
         private const val MAX_BROWSE_ARTISTS = 30
         private const val MAX_BROWSE_PODCASTS = 40
-/** Radio: la UI dell'auto non regge le ~1000 stazioni della directory IT. */
-private const val MAX_BROWSE_RADIO = 100
+        /** Radio: la UI dell'auto non regge le ~1000 stazioni della directory IT. */
+        private const val MAX_BROWSE_RADIO = 100
+        /** Stazioni che la cartella Radio FM dei risultati della lente può elencare. */
+        private const val MAX_SEARCH_RADIO_STATIONS = 50
         private const val MOOD_CACHE_MS = 60 * 60 * 1000L
         private const val MOOD_NETWORK_BUDGET_MS = 8_000L
         private const val MOOD_CATEGORY_BUDGET_MS = 10_000L

@@ -609,6 +609,91 @@ class AndroidAutoMediaLibrarySearchTest {
         assertTrue(fm.single().description.subtitle.toString().startsWith("♥"))
     }
 
+    @Test
+    fun carSearchFindsFmStationsAndTheFolderPlaysTheStream() = runBlocking {
+        val raiOne = RadioStation(
+            stationUuid = "uuid-rai-1",
+            name = "Rai Radio 1",
+            url = "https://stream.example.com/rai1",
+            urlResolved = "https://stream.example.com/rai1",
+            tags = "news,talk",
+            countryCode = "IT",
+            codec = "MP3",
+        )
+        val raiTwo = RadioStation(
+            stationUuid = "uuid-rai-2",
+            name = "Rai Radio 2",
+            url = "https://stream.example.com/rai2",
+            urlResolved = "https://stream.example.com/rai2",
+            tags = "music,pop",
+            countryCode = "IT",
+            codec = "MP3",
+        )
+        val deejay = RadioStation(
+            stationUuid = "uuid-deejay",
+            name = "Radio Deejay",
+            url = "https://stream.example.com/deejay",
+            urlResolved = "https://stream.example.com/deejay",
+            tags = "dance",
+            countryCode = "IT",
+        )
+        val stations = listOf(raiOne, raiTwo, deejay)
+        val radioRepository = mockk<RadioRepository>(relaxed = true)
+        coEvery { radioRepository.getItalianStations(any()) } returns stations
+        coEvery { radioRepository.findStationByUrl(any(), any()) } answers {
+            stations.firstOrNull { it.playableUrl == secondArg<String>() }
+        }
+        val libraryManager = mockk<YtMusicLibraryManager>(relaxed = true)
+        every { libraryManager.playlists } returns MutableStateFlow(emptyList())
+        val playlistRepository = mockk<PlaylistRepository>(relaxed = true)
+        coEvery { playlistRepository.getAll() } returns emptyList()
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = playlistRepository,
+            ytMusicLibraryManager = libraryManager,
+            downloadedTrackDao = mockk<DownloadedTrackDao>(relaxed = true),
+            searchRepository = mockk<SearchRepository>(relaxed = true),
+            innerTube = mockk<InnerTubeMusicApi>(relaxed = true),
+            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
+            artistRepository = mockk<ArtistRepository>(relaxed = true),
+            statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
+            moodsRepository = mockk<MoodsRepository>(relaxed = true),
+            podcastRepository = mockk<PodcastRepository>(relaxed = true),
+            radioRepository = radioRepository,
+            radioFavorites = RadioFavoritesRepository(
+                MemoryPreferences(),
+                CoroutineScope(Dispatchers.Unconfined),
+            ),
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
+        )
+
+        // La lente non può aprire una casella dentro la lista Radio FM: le
+        // stazioni che rispondono al testo arrivano in cima ai risultati.
+        val results = library.search("rai")
+        val folder = results.single { it.description.title.toString() == "Radio FM" }
+        assertEquals("2 stazioni", folder.description.subtitle.toString())
+        assertTrue(folder.isBrowsable)
+        assertFalse(folder.isPlayable)
+
+        val matches = library.loadChildren(folder.description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Rai Radio 1", "Rai Radio 2"), matches.titles())
+        assertTrue(matches.all { it.isPlayable })
+
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(matches.first().description.mediaId!!, player))
+        verify {
+            player.playQueue(
+                match { tracks -> tracks.single().title == "Rai Radio 1" },
+                startIndex = 0,
+                sourceLabel = "Radio FM",
+            )
+        }
+
+        // Un testo che non nomina nessuna stazione non aggiunge la cartella.
+        assertTrue(library.search("Nomatch").none { it.description.title.toString() == "Radio FM" })
+    }
+
     private fun List<MediaBrowserCompat.MediaItem>.titles() =
         map { it.description.title.toString() }
 

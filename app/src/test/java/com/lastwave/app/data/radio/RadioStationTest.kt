@@ -49,4 +49,23 @@ class RadioStationTest {
 
         assertThat(resolved.playableUrl).isEqualTo("https://example.com/live")
     }
+
+    @Test
+    fun matchesSearch_readsNameTagsAndLocation() {
+        val rai = RadioStation(
+            stationUuid = "uuid-rai",
+            name = "Rai Radio 1",
+            url = "https://example.com/live",
+            tags = "news,talk",
+            countryCode = "IT",
+            state = "Lazio",
+        )
+
+        // Stesso filtro sul telefono e in auto: nome, tag e posizione.
+        assertThat(rai.matchesSearch("rai")).isTrue()
+        assertThat(rai.matchesSearch("TALK")).isTrue()
+        assertThat(rai.matchesSearch("lazio")).isTrue()
+        assertThat(rai.matchesSearch("  ")).isTrue()
+        assertThat(rai.matchesSearch("deejay")).isFalse()
+    }
 }
