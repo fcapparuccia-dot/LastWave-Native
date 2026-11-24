@@ -33,6 +33,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -51,6 +52,7 @@ class PopularShowsFeedTest {
 
     private fun createRepository(): FeedRepository {
         return FeedRepository(
+            RuntimeEnvironment.getApplication(),
             innerTube,
             recommendationRepository,
             homeRepository,
