@@ -168,21 +168,20 @@ object NetworkModule {
     fun provideLastFmApiService(retrofit: Retrofit): LastFmApiService =
         retrofit.create(LastFmApiService::class.java)
 
+    // Radio-browser has its own base URL, so it builds its Retrofit inline
+    // instead of adding a second `Retrofit` binding (Hilt rejects two
+    // unqualified `Retrofit` providers, and Last.fm already owns the shared one).
     @Provides
     @Singleton
-    fun provideRadioRetrofit(client: OkHttpClient): Retrofit =
+    fun provideRadioApiService(client: OkHttpClient): RadioApiService =
         Retrofit.Builder()
             .baseUrl(RadioApiService.BASE_URL)
             .client(client)
             .build()
+            .create(RadioApiService::class.java)
 
     @Provides
     @Singleton
-    fun provideRadioApiService(retrofit: Retrofit): RadioApiService =
-        retrofit.create(RadioApiService::class.java)
-
-    @Provides
-    @Singleton
-    fun provideRadioRepository(api: RadioApiService, client: OkHttpClient): RadioRepository =
-        RadioRepository(api, client)
+    fun provideRadioRepository(api: RadioApiService): RadioRepository =
+        RadioRepository(api)
 }

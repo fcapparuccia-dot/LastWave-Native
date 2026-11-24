@@ -24,6 +24,7 @@ import com.lastwave.app.data.playlist.PlaylistRepository
 import com.lastwave.app.data.playlist.RecentPlaylistStore
 import com.lastwave.app.data.playlist.SavedPlaylist
 import com.lastwave.app.data.podcast.PodcastRepository
+import com.lastwave.app.data.radio.RadioRepository
 import com.lastwave.app.data.repository.ArtistRepository
 import com.lastwave.app.data.repository.SongPlayStatsRepository
 import com.lastwave.app.data.search.SearchRepository
@@ -69,6 +70,7 @@ class AndroidAutoMediaLibrarySearchTest {
             statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
+            radioRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -234,6 +236,7 @@ class AndroidAutoMediaLibrarySearchTest {
             statsRepository = mockk(relaxed = true),
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
+            radioRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -286,6 +289,7 @@ class AndroidAutoMediaLibrarySearchTest {
             statsRepository = mockk(relaxed = true),
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
+            radioRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -405,6 +409,7 @@ class AndroidAutoMediaLibrarySearchTest {
             statsRepository = statsRepository,
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
+            radioRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -492,6 +497,7 @@ class AndroidAutoMediaLibrarySearchTest {
             statsRepository = mockk<SongPlayStatsRepository>(relaxed = true),
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
+            radioRepository = mockk(relaxed = true),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )

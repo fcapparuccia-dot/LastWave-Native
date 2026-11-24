@@ -1,6 +1,5 @@
 package com.lastwave.app.ui.radio
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lastwave.app.data.radio.RadioRepository
@@ -8,11 +7,11 @@ import com.lastwave.app.data.radio.RadioStation
 import com.lastwave.app.playback.MusicPlayer
 import com.lastwave.app.playback.PlayableTrack
 import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 @HiltViewModel
 class RadioFmViewModel @Inject constructor(
@@ -20,23 +19,11 @@ class RadioFmViewModel @Inject constructor(
     private val musicPlayer: MusicPlayer,
 ) : ViewModel() {
 
-    private companion object {
-        const val TAG = "RadioFmViewModel"
-    }
-
     private val _stations = MutableStateFlow<List<RadioStation>>(emptyList())
-    val stations: StateFlow<List<RadioStation>> = _stations.stateIn(
-        scope = viewModelScope,
-        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
-        initialValue = emptyList(),
-    )
+    val stations: StateFlow<List<RadioStation>> = _stations.asStateFlow()
 
     private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.stateIn(
-        scope = viewModelScope,
-        started = kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
-        initialValue = false,
-    )
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     fun refresh() {
         viewModelScope.launch {
@@ -49,17 +36,17 @@ class RadioFmViewModel @Inject constructor(
         }
     }
 
+    /** Avvia lo stream diretto della stazione (nessuna risoluzione YouTube/InnerTube). */
     fun playStation(station: RadioStation) {
+        val track = PlayableTrack(
+            title = station.name,
+            artist = station.genreDisplay,
+            album = station.countryCode,
+            artworkUrl = station.favicon,
+            playbackUrl = station.playableUrl,
+            playbackMimeType = station.codec?.let { "audio/${it.lowercase()}" },
+        )
         viewModelScope.launch {
-            val track = PlayableTrack(
-                title = station.name,
-                artist = station.genreDisplay,
-                album = station.countryCode,
-                artworkUrl = station.favicon,
-                playbackUrl = station.playableUrl,
-                playbackMimeType = station.codec?.let { "audio/${it.lowercase()}" },
-                durationMs = null,
-            )
             musicPlayer.playQueue(listOf(track), sourceLabel = "Radio FM")
         }
     }

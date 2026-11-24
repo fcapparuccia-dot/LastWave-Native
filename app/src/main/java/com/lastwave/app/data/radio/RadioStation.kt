@@ -3,58 +3,57 @@ package com.lastwave.app.data.radio
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** A single radio station from the radio-browser.info directory. */
+/** Una stazione radio dalla directory pubblica radio-browser.info. */
 @Serializable
 data class RadioStation(
-    /** Globally unique station id from the directory. */
+    /** Id globale della stazione nella directory. */
+    @SerialName("stationuuid")
     val stationUuid: String,
-    /** Human-readable station name. */
+    /** Nome leggibile della stazione. */
     val name: String,
-    /** Stream URL as provided by the station owner (may be a playlist/redirect). */
+    /** URL dello stream fornito dalla stazione (può essere un redirect/playlist). */
     val url: String,
-    /** Automatically resolved direct stream URL (preferred for playback). */
+    /** URL diretto risolto dalla directory (preferito per la riproduzione). */
     @SerialName("url_resolved")
     val urlResolved: String? = null,
-    /** Icon/picture representing the stream (PNG/JPG). */
+    /** Icona della stazione (PNG/JPG). */
     @SerialName("favicon")
     val favicon: String? = null,
-    /** Comma-separated tags/genres. */
+    /** Tag/generi separati da virgola. */
     val tags: String? = null,
-    /** ISO 3166-1 alpha-2 country code (e.g. "IT"). */
+    /** Codice paese ISO 3166-1 alpha-2 (es. "IT"). */
+    @SerialName("countrycode")
     val countryCode: String? = null,
-    /** State/region inside the country. */
+    /** Stato/regione all'interno del paese. */
     val state: String? = null,
-    /** Spoken languages. */
+    /** Lingue parlate. */
     val language: String? = null,
-    /** Audio codec reported by the directory. */
+    /** Codec audio indicato dalla directory. */
     val codec: String? = null,
-    /** Bitrate reported by the directory. */
+    /** Bitrate indicato dalla directory. */
     val bitrate: Int? = null,
-    /** Whether the stream uses HLS. */
-    @SerialName("hls")
-    val hls: Boolean? = null,
-    /** Last check result from the directory. */
+    /** Numero di voti (popolarità). */
+    @SerialName("votes")
+    val votes: Int? = null,
+    /** Ultimo controllo della directory: stream funzionante. */
     @SerialName("lastcheckok")
     val lastCheckOk: Boolean? = null,
 ) {
-    /** Best playable URL: resolved stream > raw URL. */
+    /** URL migliore da riprodurre: stream risolto, altrimenti URL grezzo. */
     val playableUrl: String
-        get() = urlResolved.takeIf(String::isNotBlank) ?: url
+        get() = urlResolved?.takeIf { it.isNotBlank() } ?: url
 
-    /** Genre/tags trimmed for display. */
+    /** Genere/tag accorciato per la UI. */
     val genreDisplay: String
-        get() = tags?.takeIf { it.isNotBlank() }?.let { it.split(",").first().trim() }
-            ?: state.takeIf { it.isNotBlank() } ?: countryCode.takeIf { it.isNotBlank() } ?: "Radio"
+        get() = tags?.split(',')?.firstOrNull()?.trim()?.takeIf { it.isNotBlank() }
+            ?: state?.takeIf { it.isNotBlank() }
+            ?: countryCode?.takeIf { it.isNotBlank() }
+            ?: "Radio"
 
-    /** Short location string for the UI subtitle. */
+    /** Posizione breve per il sottotitolo (stato e paese). */
     val locationDisplay: String
-        get() = buildString {
-            appendIfNotBlank(state)
-            if (state.isNotNull() && countryCode.isNotNull()) append(", ")
-            appendIfNotBlank(countryCode)
-        }
-
-    private fun String?.appendIfNotBlank(value: String?) {
-        if (value?.isNotBlank() == true) append(value)
-    }
+        get() = listOfNotNull(
+            state?.takeIf { it.isNotBlank() },
+            countryCode?.takeIf { it.isNotBlank() },
+        ).joinToString(", ")
 }
