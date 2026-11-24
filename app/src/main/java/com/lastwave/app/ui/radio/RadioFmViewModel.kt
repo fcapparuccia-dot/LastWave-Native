@@ -44,7 +44,7 @@ class RadioFmViewModel @Inject constructor(
             album = station.countryCode,
             artworkUrl = station.favicon,
             playbackUrl = station.playableUrl,
-            playbackMimeType = station.codec?.let { "audio/${it.lowercase()}" },
+            playbackMimeType = station.mimeType,
         )
         viewModelScope.launch {
             musicPlayer.playQueue(listOf(track), sourceLabel = "Radio FM")

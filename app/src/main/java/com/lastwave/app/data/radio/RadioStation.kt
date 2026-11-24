@@ -35,13 +35,32 @@ data class RadioStation(
     /** Numero di voti (popolarità). */
     @SerialName("votes")
     val votes: Int? = null,
-    /** Ultimo controllo della directory: stream funzionante. */
+    /** HLS: la directory lo espone come intero 0/1 (non boolean). */
+    @SerialName("hls")
+    val hls: Int? = null,
+    /** Ultimo controllo della directory: 1 = funzionante, 0 = no (intero, non boolean). */
     @SerialName("lastcheckok")
-    val lastCheckOk: Boolean? = null,
+    val lastCheckOk: Int? = null,
 ) {
     /** URL migliore da riprodurre: stream risolto, altrimenti URL grezzo. */
     val playableUrl: String
         get() = urlResolved?.takeIf { it.isNotBlank() } ?: url
+
+    /**
+     * MIME valido per ExoPlayer. La directory fornisce "MP3"/"AAC"/…: "audio/mp3"
+     * non è un MIME standard e faceva fallire la creazione del MediaItem, quindi
+     * i codec noti vengono mappati e gli altri lasciano che ExoPlayer lo inferisca.
+     */
+    val mimeType: String?
+        get() = when (codec?.trim()?.uppercase()) {
+            "MP3" -> "audio/mpeg"
+            "AAC", "AAC+", "AACPLUS" -> "audio/aac"
+            "OGG", "OGG VORBIS", "VORBIS" -> "audio/ogg"
+            "OPUS" -> "audio/opus"
+            "FLAC" -> "audio/flac"
+            "HLS" -> "application/x-mpegURL"
+            else -> null
+        }
 
     /** Genere/tag accorciato per la UI. */
     val genreDisplay: String

@@ -96,7 +96,7 @@ private fun RadioStationRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (station.favicon != null) {
+        if (!station.favicon.isNullOrBlank()) {
             AsyncImage(
                 model = station.favicon,
                 contentDescription = null,

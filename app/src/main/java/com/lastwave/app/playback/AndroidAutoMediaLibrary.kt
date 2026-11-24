@@ -1133,7 +1133,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
                     album = station.countryCode,
                     artworkUrl = station.favicon,
                     playbackUrl = station.playableUrl,
-                    playbackMimeType = station.codec?.let { "audio/${it.lowercase()}" },
+                    playbackMimeType = station.mimeType,
                     durationMs = null,
                 ),
             )
@@ -1152,7 +1152,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             album = station.countryCode,
             artworkUrl = station.favicon,
             playbackUrl = station.playableUrl,
-            playbackMimeType = station.codec?.let { "audio/${it.lowercase()}" },
+            playbackMimeType = station.mimeType,
             durationMs = null,
         )
         player.playQueue(listOf(track), sourceLabel = "Radio FM")
