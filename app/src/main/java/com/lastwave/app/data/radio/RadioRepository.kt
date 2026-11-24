@@ -8,7 +8,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.parseToJsonElement
 
 /**
  * Repository per le stazioni FM dalla directory radio-browser.info.
@@ -46,7 +45,7 @@ class RadioRepository @Inject constructor(
         runCatching {
             val response = api.searchStations(params)
             if (!response.isSuccessful) {
-                Log.w(TAG, "Radio directory HTTP ${response.code} for $countryCode")
+                Log.w(TAG, "Radio directory HTTP ${response.code()} for $countryCode")
                 emptyList()
             } else {
                 val body = response.body()?.string().orEmpty()

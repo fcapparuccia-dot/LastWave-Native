@@ -58,14 +58,16 @@ fun RadioFmScreen(
             CircularProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = padding.top, start = 16.dp, end = 16.dp)
+                    .padding(padding)
+                    .padding(horizontal = 16.dp)
                     .height(20.dp),
             )
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = padding.top, start = 16.dp, end = 16.dp),
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
             ) {
                 items(
                     items = stations,
