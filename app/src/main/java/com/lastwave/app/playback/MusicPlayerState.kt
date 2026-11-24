@@ -172,6 +172,9 @@ data class PlayableTrack(
     /** Podcast show id (MPSPPLâ€¦) when this entry is a podcast episode. */
     val showId: String? = null,
     val trackNumber: Int? = null,
+    /** Directory id when this entry is an FM station, so the heart saves the
+     *  station instead of a Liked Song with no video id. */
+    val radioStationUuid: String? = null,
 )
 
 @Serializable

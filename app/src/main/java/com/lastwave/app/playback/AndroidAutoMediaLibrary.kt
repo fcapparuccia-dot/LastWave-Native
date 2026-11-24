@@ -22,7 +22,9 @@ import com.lastwave.app.data.music.YouTubeMusicTrack
 import com.lastwave.app.data.music.YouTubePlaylistSummary
 import com.lastwave.app.data.podcast.PodcastRepository
 import com.lastwave.app.data.podcast.toPlayableTrack
+import com.lastwave.app.data.radio.RadioFavoritesRepository
 import com.lastwave.app.data.radio.RadioRepository
+import com.lastwave.app.data.radio.toPlayableTrack as toRadioStationTrack
 import com.lastwave.app.data.playlist.CarMediaFavorite
 import com.lastwave.app.data.playlist.CarMediaFavorites
 import com.lastwave.app.data.playlist.PlaylistRepository
@@ -68,6 +70,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
     private val moodsRepository: MoodsRepository,
     private val podcastRepository: PodcastRepository,
     private val radioRepository: RadioRepository,
+    private val radioFavorites: RadioFavoritesRepository,
     private val recentPlaylistStore: RecentPlaylistStore,
     private val settingsPreferences: SettingsPreferences,
 ) {
@@ -154,6 +157,8 @@ class AndroidAutoMediaLibrary @Inject constructor(
             ytMusicLibraryManager.playlists.map { },
         )
     val downloadChanges get() = downloadedTrackDao.getAll()
+    /** Stations whose heart was flipped anywhere: Android Auto reloads the two nodes. */
+    val radioFavoriteChanges get() = radioFavorites.favoriteIds
 
     /** Rows of one node. The car walks back up with its own arrow, one tap per level. */
     suspend fun loadChildren(parentId: String, state: MusicPlayerState): List<MediaBrowserCompat.MediaItem> {
@@ -184,6 +189,7 @@ class AndroidAutoMediaLibrary @Inject constructor(
             parentId == LIBRARY_PODCASTS_ID -> podcastShowItems()
             parentId.startsWith(PODCAST_SHOW_PREFIX) -> podcastShowChildren(parentId)
             parentId == RADIO_FM_ID -> radioItems()
+            parentId == RADIO_FAVORITES_ID -> radioFavoriteItems()
             parentId.startsWith(RADIO_STATION_PREFIX) -> emptyList()
             parentId == QUEUE_ID -> state.queue.mapIndexed(::queueTrackItem)
             parentId == CHARTS_ID -> {
@@ -993,18 +999,24 @@ class AndroidAutoMediaLibrary @Inject constructor(
         }
     }
 
-    private suspend fun browseGroupItems(): List<MediaBrowserCompat.MediaItem> =
+    private suspend fun browseGroupItems(): List<MediaBrowserCompat.MediaItem> = buildList {
+        // La radio FM non è un genere: sta in cima a Sfoglia, dove il guidatore
+        // la trova senza scorrere l'intero elenco di mood.
+        add(browsableItem(RADIO_FM_ID, "Radio FM", "Stazioni FM italiane in diretta"))
         // Indexed on the unfiltered list: the media id carries that index, so
         // skipping an empty group here must not renumber the others.
         moodGroups().withIndex()
             .filter { (_, group) -> group.tiles.isNotEmpty() }
-            .map { (index, group) ->
-                browsableItem(
-                    mediaId = "$BROWSE_GROUP_PREFIX$index",
-                    title = group.title,
-                    subtitle = if (group.tiles.size == 1) "1 genere" else "${group.tiles.size} generi",
+            .forEach { (index, group) ->
+                add(
+                    browsableItem(
+                        mediaId = "$BROWSE_GROUP_PREFIX$index",
+                        title = group.title,
+                        subtitle = if (group.tiles.size == 1) "1 genere" else "${group.tiles.size} generi",
+                    ),
                 )
             }
+    }
 
     private suspend fun browseTileItems(parentId: String): List<MediaBrowserCompat.MediaItem> {
         val groupIndex = parentId.removePrefix(BROWSE_GROUP_PREFIX).toIntOrNull() ?: return emptyList()
@@ -1118,46 +1130,58 @@ class AndroidAutoMediaLibrary @Inject constructor(
         if (runCatching { podcastRepository.isEnabledNow() }.getOrDefault(false)) {
             add(browsableItem(LIBRARY_PODCASTS_ID, "Podcast e show", "I tuoi show"))
         }
-        add(browsableItem(RADIO_FM_ID, "Radio FM", "Stazioni FM italiane in diretta"))
+        val savedRadios = runCatching { radioFavorites.getAll() }.getOrDefault(emptyList())
+        add(
+            browsableItem(
+                mediaId = RADIO_FAVORITES_ID,
+                title = "Radio preferite",
+                subtitle = if (savedRadios.isEmpty()) {
+                    "Nessuna stazione salvata"
+                } else {
+                    countLabel(savedRadios.size, "stazione", "stazioni")
+                },
+            ),
+        )
     }
 
     /** One row per Italian FM station from the directory; tap starts the stream. */
     private suspend fun radioItems(): List<MediaBrowserCompat.MediaItem> {
+        val favoriteIds = radioFavorites.favoriteIds.value
         val stations = runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
             // La browse list dell'auto arriva tutta in un colpo via IPC: mille
             // righe bloccano la UI dell'auto. La schermata telefono le mostra tutte.
             .take(MAX_BROWSE_RADIO)
         return stations.map { station ->
+            val track = station.toRadioStationTrack()
             playableItem(
                 mediaId = "$RADIO_STATION_PREFIX${encodeEntityId(station.playableUrl)}",
-                track = com.lastwave.app.playback.PlayableTrack(
-                    title = station.name,
-                    artist = station.genreDisplay,
-                    album = station.countryCode,
-                    artworkUrl = station.favicon,
-                    playbackUrl = station.playableUrl,
-                    playbackMimeType = station.mimeType,
-                    durationMs = null,
-                ),
+                track = track,
+                subtitle = if (station.stationUuid in favoriteIds) "♥ ${track.artist}" else track.artist,
             )
         }
     }
+
+    /** Le stazioni col cuore: stesso id URL della lista FM, quindi si riprendono offline. */
+    private suspend fun radioFavoriteItems(): List<MediaBrowserCompat.MediaItem> =
+        runCatching { radioFavorites.getAll() }.getOrDefault(emptyList()).map { favorite ->
+            playableItem(
+                mediaId = "$RADIO_STATION_PREFIX${encodeEntityId(favorite.streamUrl)}",
+                track = favorite.toPlayableTrack(),
+            )
+        }
 
     /** Start playback of one FM station (already resolved direct stream URL). */
     private suspend fun playRadioStation(mediaId: String, player: MusicPlayer): Boolean {
         val encodedUrl = mediaId.removePrefix(RADIO_STATION_PREFIX)
         val streamUrl = decodeEntityId(encodedUrl) ?: return false
-        val stations = runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
-        val station = radioRepository.findStationByUrl(stations, streamUrl) ?: return false
-        val track = com.lastwave.app.playback.PlayableTrack(
-            title = station.name,
-            artist = station.genreDisplay,
-            album = station.countryCode,
-            artworkUrl = station.favicon,
-            playbackUrl = station.playableUrl,
-            playbackMimeType = station.mimeType,
-            durationMs = null,
-        )
+        // Le preferite portano nome, icona e MIME con sé: in auto la directory
+        // può non essere raggiungibile.
+        val saved = runCatching { radioFavorites.getAll() }.getOrDefault(emptyList())
+            .firstOrNull { it.streamUrl.equals(streamUrl, ignoreCase = true) }
+        val track = saved?.toPlayableTrack() ?: run {
+            val stations = runCatching { radioRepository.getItalianStations() }.getOrDefault(emptyList())
+            radioRepository.findStationByUrl(stations, streamUrl)?.toRadioStationTrack()
+        } ?: return false
         player.playQueue(listOf(track), sourceLabel = "Radio FM")
         return true
     }
@@ -1963,11 +1987,15 @@ class AndroidAutoMediaLibrary @Inject constructor(
         )
     }
 
-    private fun playableItem(mediaId: String, track: PlayableTrack) = MediaBrowserCompat.MediaItem(
+    private fun playableItem(
+        mediaId: String,
+        track: PlayableTrack,
+        subtitle: String = track.artist,
+    ) = MediaBrowserCompat.MediaItem(
         MediaDescriptionCompat.Builder()
             .setMediaId(mediaId)
             .setTitle(track.title)
-            .setSubtitle(track.artist)
+            .setSubtitle(subtitle)
             .setDescription(track.album)
             .setIconUri(track.coverUri()?.toSafeUri())
             .build(),
@@ -2049,8 +2077,10 @@ class AndroidAutoMediaLibrary @Inject constructor(
         const val LIBRARY_ALBUMS_ID = "category:library:albums"
         const val LIBRARY_ARTISTS_ID = "category:library:artists"
         private const val LIBRARY_PODCASTS_ID = "category:library:podcasts"
-        /** Top-level Radio FM node inside the Library tab. */
+        /** Top-level Radio FM node inside the Sfoglia tab. */
         const val RADIO_FM_ID = "category:radio_fm"
+        /** FM stations saved with the heart, inside the Library tab. */
+        const val RADIO_FAVORITES_ID = "category:radio_favorites"
         /** Individual playable station: prefix + base64-encoded stream URL. */
         private const val RADIO_STATION_PREFIX = "radio-station:"
         private const val BROWSE_GROUP_PREFIX = "browse:group:"

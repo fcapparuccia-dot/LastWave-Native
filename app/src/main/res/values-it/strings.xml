@@ -1458,5 +1458,7 @@
     <string name="radio_fm_refresh">Aggiorna stazioni</string>
     <string name="radio_fm_empty">Nessuna stazione disponibile. Controlla la connessione e riprova.</string>
     <string name="radio_fm_no_results">Nessuna stazione corrisponde alla ricerca.</string>
+    <string name="radio_fm_favorite_add">Aggiungi alle stazioni preferite</string>
+    <string name="radio_fm_favorite_remove">Rimuovi dalle stazioni preferite</string>
 </resources>
 

@@ -400,6 +400,16 @@ class MusicPlaybackService : MediaBrowserServiceCompat() {
             }
         }
         scope.launch {
+            // Il cuore di una stazione (lista radio o player) aggiorna il nodo
+            // "Radio preferite" e il conteggio in Libreria. favoriteIds è già
+            // uno StateFlow, quindi notifica solo quando l'insieme cambia.
+            androidAutoLibrary.radioFavoriteChanges.collect {
+                notifyCarLibraryChanged(AndroidAutoMediaLibrary.RADIO_FAVORITES_ID)
+                notifyChildrenChangedSafely(AndroidAutoMediaLibrary.RADIO_FM_ID)
+                notifyChildrenChangedSafely(AndroidAutoMediaLibrary.LIBRARY_ID)
+            }
+        }
+        scope.launch {
             // The heart of the metadata follows a like made anywhere in the app.
             trackLikeController.likedTrackKeys.drop(1).collect {
                 publishSystemState(musicPlayer.state.value)

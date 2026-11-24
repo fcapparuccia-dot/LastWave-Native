@@ -5,7 +5,6 @@ package com.lastwave.app.ui.player
 import com.lastwave.app.data.local.SeekbarStyle
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.filled.CheckCircle
-import com.lastwave.app.data.playlist.isLikedIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.luminance
@@ -275,7 +274,6 @@ import com.lastwave.app.playback.PlaybackProgressState
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.lastwave.app.data.artwork.ArtworkNormalizer
 import com.lastwave.app.playback.PlayableTrack
-import com.lastwave.app.playback.toGeneratedTrack
 import com.lastwave.app.playback.resolve.MetadataLog
 import com.lastwave.app.ui.common.ArtworkImage
 import com.lastwave.app.ui.common.ArtworkViewModel
@@ -747,11 +745,9 @@ internal fun ExpandedPlayer(
     val lyricsProviderStatuses by viewModel.lyricsProviderStatuses.collectAsStateWithLifecycle()
     val canvas by viewModel.canvasState.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val likedTrackKeys by viewModel.likedTrackKeys.collectAsStateWithLifecycle()
     val currentTrack = state.current
-    // Same test Liked Songs storage uses: normalized title|artist OR YouTube id.
-    val isLiked = currentTrack != null &&
-        currentTrack.toGeneratedTrack().isLikedIn(likedTrackKeys)
+    // Liked Songs for songs, Radio preferite for FM stations.
+    val isLiked by viewModel.isCurrentTrackLiked.collectAsStateWithLifecycle()
     val youTubeLiked by viewModel.youTubeLiked.collectAsStateWithLifecycle()
     val lyricsOffsetMs by viewModel.liveLyricsOffsetMs.collectAsStateWithLifecycle()
     FullPlayer(

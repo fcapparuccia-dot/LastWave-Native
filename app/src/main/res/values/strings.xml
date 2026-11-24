@@ -800,6 +800,8 @@
     <string name="radio_fm_refresh">Refresh stations</string>
     <string name="radio_fm_empty">No stations available. Check your connection and try again.</string>
     <string name="radio_fm_no_results">No station matches your search.</string>
+    <string name="radio_fm_favorite_add">Add to favorite stations</string>
+    <string name="radio_fm_favorite_remove">Remove from favorite stations</string>
     <string name="feed_your_sound">My genres</string>
     <string name="feed_your_sound_sub">Tap a vibe to start instant radio</string>
     <string name="feed_picked_you">Picked for you</string>

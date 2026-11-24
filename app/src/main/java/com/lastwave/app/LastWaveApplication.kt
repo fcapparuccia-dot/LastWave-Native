@@ -41,6 +41,7 @@ class LastWaveApplication : Application(), ImageLoaderFactory {
     @Inject lateinit var ytMusicSyncManager: dagger.Lazy<com.lastwave.app.data.ytmusic.YtMusicSyncManager>
     @Inject lateinit var ytMusicHistorySyncManager: dagger.Lazy<com.lastwave.app.data.ytmusic.YtMusicHistorySyncManager>
     @Inject lateinit var likedSongsManager: dagger.Lazy<com.lastwave.app.data.playlist.LikedSongsManager>
+    @Inject lateinit var radioFavoritesMigration: dagger.Lazy<com.lastwave.app.data.radio.RadioFavoritesMigration>
     @Inject lateinit var trackDownloadManager: dagger.Lazy<com.lastwave.app.data.download.TrackDownloadManager>
     @Inject lateinit var discordPresenceManager: dagger.Lazy<com.lastwave.app.presence.DiscordPresenceManager>
     @Inject lateinit var appLocaleManager: dagger.Lazy<com.lastwave.app.util.AppLocaleManager>
@@ -117,6 +118,10 @@ class LastWaveApplication : Application(), ImageLoaderFactory {
             }
             runCatching { likedSongsManager.get().start() }
                 .onFailure { com.lastwave.app.diagnostics.AppLog.e("LastWaveStartup", "Liked Songs startup disabled", it) }
+            // Le stazioni messe col cuore prima dei preferiti radio sono finite
+            // in Liked Songs senza URL: spostale una volta sola.
+            runCatching { radioFavoritesMigration.get().start() }
+                .onFailure { com.lastwave.app.diagnostics.AppLog.e("LastWaveStartup", "Radio favorites migration disabled", it) }
         }
         // Never create BotGuard's headless WebView during app launch. Some
         // Android 11 OEM devices have a missing/updating WebView provider,

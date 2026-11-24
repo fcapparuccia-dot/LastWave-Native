@@ -391,6 +391,11 @@ class PlayerViewModel @Inject constructor(
     private var customPlaylistsLoaded = false
     val likedTrackKeys = trackLikeController.likedTrackKeys
 
+    /** Heart of the playing track: Liked Songs for songs, Radio preferite for FM stations. */
+    val isCurrentTrackLiked: StateFlow<Boolean> = combine(player.chromeState, likedTrackKeys) { state, _ ->
+        state.current?.let { trackLikeController.isLiked(it) } == true
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     // Account controls project the same state as the heart. A second status read
     // could arrive after a tap and make the next request perform the opposite action.
     val youTubeLiked: StateFlow<Boolean?> = combine(
@@ -912,7 +917,11 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val liked = trackLikeController.toggle(track)
-                _toastMessage.emit(if (liked) "Added to Liked Songs" else "Removed from Liked Songs")
+                if (trackLikeController.isRadioStation(track)) {
+                    _toastMessage.emit(if (liked) "Aggiunta a Radio preferite" else "Rimossa da Radio preferite")
+                } else {
+                    _toastMessage.emit(if (liked) "Added to Liked Songs" else "Removed from Liked Songs")
+                }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {

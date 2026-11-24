@@ -24,7 +24,10 @@ import com.lastwave.app.data.playlist.PlaylistRepository
 import com.lastwave.app.data.playlist.RecentPlaylistStore
 import com.lastwave.app.data.playlist.SavedPlaylist
 import com.lastwave.app.data.podcast.PodcastRepository
+import com.lastwave.app.data.radio.RadioFavorite
+import com.lastwave.app.data.radio.RadioFavoritesRepository
 import com.lastwave.app.data.radio.RadioRepository
+import com.lastwave.app.data.radio.RadioStation
 import com.lastwave.app.data.repository.ArtistRepository
 import com.lastwave.app.data.repository.SongPlayStatsRepository
 import com.lastwave.app.data.search.SearchRepository
@@ -32,9 +35,12 @@ import com.lastwave.app.data.search.SearchResultItem
 import com.lastwave.app.data.search.SearchTab
 import com.lastwave.app.data.ytmusic.YtMusicLibraryManager
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -71,6 +77,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             radioRepository = mockk(relaxed = true),
+            radioFavorites = RadioFavoritesRepository(MemoryPreferences(), CoroutineScope(Dispatchers.Unconfined)),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -237,6 +244,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
             radioRepository = mockk(relaxed = true),
+            radioFavorites = RadioFavoritesRepository(MemoryPreferences(), CoroutineScope(Dispatchers.Unconfined)),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -290,6 +298,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
             radioRepository = mockk(relaxed = true),
+            radioFavorites = RadioFavoritesRepository(MemoryPreferences(), CoroutineScope(Dispatchers.Unconfined)),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -410,6 +419,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk(relaxed = true),
             podcastRepository = mockk(relaxed = true),
             radioRepository = mockk(relaxed = true),
+            radioFavorites = RadioFavoritesRepository(MemoryPreferences(), CoroutineScope(Dispatchers.Unconfined)),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -498,6 +508,7 @@ class AndroidAutoMediaLibrarySearchTest {
             moodsRepository = mockk<MoodsRepository>(relaxed = true),
             podcastRepository = mockk<PodcastRepository>(relaxed = true),
             radioRepository = mockk(relaxed = true),
+            radioFavorites = RadioFavoritesRepository(MemoryPreferences(), CoroutineScope(Dispatchers.Unconfined)),
             recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
             settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
         )
@@ -527,6 +538,75 @@ class AndroidAutoMediaLibrarySearchTest {
             page.drop(1).map { it.description.mediaId },
             toggled.drop(1).map { it.description.mediaId },
         )
+    }
+
+    @Test
+    fun radioFrequencyMovedToBrowseAndHeartedStationsSitInTheLibrary() = runBlocking {
+        val station = RadioStation(
+            stationUuid = "uuid-rai-1",
+            name = "Rai Radio 1",
+            url = "https://stream.example.com/rai1",
+            urlResolved = "https://stream.example.com/rai1",
+            tags = "news,talk",
+            countryCode = "IT",
+            codec = "MP3",
+        )
+        val radioRepository = mockk<RadioRepository>(relaxed = true)
+        coEvery { radioRepository.getItalianStations(any()) } returns listOf(station)
+        coEvery { radioRepository.findStationByUrl(any(), any()) } returns station
+        val radioFavorites = RadioFavoritesRepository(
+            MemoryPreferences(),
+            CoroutineScope(Dispatchers.Unconfined),
+        )
+        val library = AndroidAutoMediaLibrary(
+            context = mockk<Context> { every { packageName } returns "com.lastwave.app" },
+            playlistRepository = mockk(relaxed = true),
+            ytMusicLibraryManager = mockk(relaxed = true),
+            downloadedTrackDao = mockk(relaxed = true),
+            searchRepository = mockk(relaxed = true),
+            innerTube = mockk(relaxed = true),
+            carMediaFavorites = CarMediaFavorites(MemoryPreferences()),
+            artistRepository = mockk(relaxed = true),
+            statsRepository = mockk(relaxed = true),
+            moodsRepository = mockk(relaxed = true),
+            podcastRepository = mockk(relaxed = true),
+            radioRepository = radioRepository,
+            radioFavorites = radioFavorites,
+            recentPlaylistStore = RecentPlaylistStore(MemoryPreferences()),
+            settingsPreferences = SettingsPreferences(MemoryPreferences(), RuntimeEnvironment.getApplication()),
+        )
+
+        // Sfoglia apre la lista FM, Libreria non la porta più.
+        val browse = library.loadChildren(AndroidAutoMediaLibrary.BROWSE_ID, MusicPlayerState())
+        assertEquals("Radio FM", browse.first().description.title.toString())
+        val libraryItems = library.loadChildren(AndroidAutoMediaLibrary.LIBRARY_ID, MusicPlayerState())
+        val radioNode = libraryItems.first { it.description.title.toString() == "Radio preferite" }
+        assertFalse(libraryItems.any { it.description.title.toString() == "Radio FM" })
+
+        // Il nodo resta visibile anche vuoto: dice al guidatore dove finiscono i cuori.
+        assertTrue(library.loadChildren(radioNode.description.mediaId!!, MusicPlayerState()).isEmpty())
+
+        // Il cuore (lista radio o player) riempie il nodo della Libreria.
+        assertTrue(radioFavorites.toggle(RadioFavorite.fromStation(station)))
+        val saved = library.loadChildren(radioNode.description.mediaId!!, MusicPlayerState())
+        assertEquals(listOf("Rai Radio 1"), saved.titles())
+
+        // Una preferita parte dal suo URL salvato: nessuna lettura della directory.
+        val player = mockk<MusicPlayer>(relaxed = true)
+        assertTrue(library.playMediaId(saved.single().description.mediaId!!, player))
+        verify {
+            player.playQueue(
+                match { tracks -> tracks.single().radioStationUuid == "uuid-rai-1" },
+                startIndex = 0,
+                sourceLabel = "Radio FM",
+            )
+        }
+        coVerify(exactly = 0) { radioRepository.getItalianStations(any()) }
+
+        // La lista FM segna col cuore le stazioni salvate.
+        val fm = library.loadChildren(AndroidAutoMediaLibrary.RADIO_FM_ID, MusicPlayerState())
+        assertEquals(listOf("Rai Radio 1"), fm.titles())
+        assertTrue(fm.single().description.subtitle.toString().startsWith("♥"))
     }
 
     private fun List<MediaBrowserCompat.MediaItem>.titles() =

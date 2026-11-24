@@ -46,8 +46,8 @@ utente Spotify ritrova in auto:
 |---|---|
 | **Home** | brano/coda in riproduzione, Liked Songs, **Popolari ora**, **Nuove uscite**, ascoltati di recente, Download, musica locale, **Preferiti** (solo se non vuoto) |
 | **Recenti** | playlist avviate davvero (dalla più recente), poi i brani ascoltati di recente |
-| **Sfoglia** | gruppi di generi/mood di YouTube Music → generi → playlist del genere → brani |
-| **Libreria** | Playlist salvate, Album salvati, Artisti (dalla cronologia di ascolto), Podcast e show |
+| **Sfoglia** | **Radio FM** (stazioni in diretta), poi gruppi di generi/mood di YouTube Music → generi → playlist del genere → brani |
+| **Libreria** | Playlist salvate, Album salvati, Artisti (dalla cronologia di ascolto), Podcast e show, **Radio preferite** (le stazioni col cuore) |
 
 **Nuove uscite** è un nodo con tre sottomenu, non una lista piatta di brani:
 

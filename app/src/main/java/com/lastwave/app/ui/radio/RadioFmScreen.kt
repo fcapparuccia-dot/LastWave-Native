@@ -17,9 +17,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -55,6 +58,8 @@ fun RadioFmScreen(
 ) {
     val stations by viewModel.stations.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val favorites by viewModel.favorites.collectAsState()
+    val favoriteIds = remember(favorites) { favorites.mapTo(mutableSetOf()) { it.stationUuid } }
     var query by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
@@ -164,7 +169,9 @@ fun RadioFmScreen(
                         ) { station ->
                             RadioStationRow(
                                 station = station,
+                                isFavorite = station.stationUuid in favoriteIds,
                                 onClick = { viewModel.playStation(station) },
+                                onToggleFavorite = { viewModel.toggleFavorite(station) },
                             )
                         }
                     }
@@ -177,7 +184,9 @@ fun RadioFmScreen(
 @Composable
 private fun RadioStationRow(
     station: RadioStation,
+    isFavorite: Boolean,
     onClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -225,9 +234,21 @@ private fun RadioStationRow(
         }
 
         Spacer(modifier = Modifier.width(4.dp))
+        IconButton(onClick = onToggleFavorite) {
+            Icon(
+                imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                contentDescription = stringResource(
+                    if (isFavorite) R.string.radio_fm_favorite_remove else R.string.radio_fm_favorite_add,
+                ),
+                tint = if (isFavorite) FavoriteHeart else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Icon(
             imageVector = Icons.Filled.PlayArrow,
             contentDescription = null,
         )
     }
 }
+
+/** Lo stesso rosa-rosso del cuore del player. */
+private val FavoriteHeart = Color(0xFFE91E63)
