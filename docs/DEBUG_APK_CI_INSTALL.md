@@ -187,3 +187,15 @@ Contesto e cronologia della firma: [`docs/side-by-side-debug-build.md`](side-by-
 - su quel PC `adb` non era installato: `platform-tools` (adb 37.0.3) scaricato in
   `%TEMP%\platform-tools`. Al primo collegamento il telefono risulta `unauthorized`
   finché non si accetta il popup «Consenti debug USB» (spunta «Ricorda»).
+
+## Stato verificato — 25 novembre 2026
+
+- run `45624977486` sul commit `0a46226` (fix della promozione a foreground
+  service prima del play da Android Auto): `conclusion=success` in circa sei
+  minuti (13:34Z -> 13:42Z), step *Car library unit tests* verde, artifact
+  `LastWave-v5.2.3-debug-APK` da 51 005 321 byte con `SIGNER.txt` che riporta
+  `05e3717a…` su entrambe le righe e hash dell'APK uguale a `SHA256SUMS.txt`
+  (`05bef119…`, 143 986 021 byte);
+- APK scaricato in `%TEMP%\lw-ci-apk\apk\LastWave-v5.2.3-debug.apk` ma **non
+  installato**: `adb devices` non elencava telefoni (cavo scollegato). Alla
+  prossima connessione basta `adb install -r` su quel file, senza ri-firmare.
