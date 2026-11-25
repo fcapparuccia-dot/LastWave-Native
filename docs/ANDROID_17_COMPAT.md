@@ -71,6 +71,12 @@ attivo. Aggiunte due chiamate, sullo stesso pattern dei vicini:
 Nessun altro cambiamento di flusso: la notifica compare un attimo prima, come
 già succede per la ricerca vocale.
 
+Gli altri due percorsi auto non hanno lo stesso buco: `playCarSearch` viene
+chiamata solo da `onPlayFromSearch` (riga 294) e da `onStartCommand` (riga 694),
+che promuovono entrambi prima; `playCarArtistRadio` (riga 193) esce subito se
+`state.current` è `null` (riga 205), e con un brano carico ogni aggiornamento di
+stato promuove già (`MusicPlaybackServiceNotification.kt:130-131`).
+
 ## Altre modifiche "all apps" della 17
 
 ### Limiti di memoria per app
@@ -121,9 +127,13 @@ anche se tutto è dichiarato correttamente.
 
 ## Cosa non è stato verificato
 
-Nessuna prova su dispositivo: `adb devices` non elencava telefoni e non è stata
-fatta una build. Il cambio su `playCarMediaId` allinea quel percorso al pattern
-già in uso, non corregge un bug visto in un log.
+La build è passata in CI (run `45624977486` sul commit `0a46226`: build debug e
+test della libreria car verdi, APK firmato `05e3717a…`, lo stesso digest della
+chiave con cui è installata l'app sul telefono), quindi le due chiamate
+compilano davvero. **Non** è stata fatta la prova sul dispositivo: il 25/11
+`adb devices` non elencava telefoni e l'APK è rimasto in
+`%TEMP%\lw-ci-apk\apk`. Il cambio su `playCarMediaId` allinea quel percorso al
+pattern già in uso, non corregge un bug visto in un log.
 
 ## Prova da fare sull'Edge 60 (Android 17)
 
