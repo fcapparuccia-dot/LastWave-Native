@@ -171,13 +171,22 @@ internal fun MusicPlaybackService.publishOriginOsLyrics(state: MusicPlayerState)
     }
 
 internal fun MusicPlaybackService.playCarMediaId(mediaId: String) {
+        // Android 17 silences audio written with no visible activity and no
+        // foreground service (background audio hardening). This path starts
+        // playback from the car while the phone shows nothing, so the service
+        // must be foreground before the first frame, exactly like
+        // onPlayFromSearch does.
+        promoteForPlayback()
         scope.launch {
             val played = runCatching {
                 withContext(Dispatchers.IO) { androidAutoLibrary.playMediaId(mediaId, musicPlayer) }
             }.onFailure { error ->
                 android.util.Log.w("MusicPlaybackService", "Android Auto playback request failed", error)
             }.getOrDefault(false)
-            if (!played) publishCarPlaybackError("That item is no longer available")
+            if (!played) {
+                publishCarPlaybackError("That item is no longer available")
+                demoteIfIdle()
+            }
         }
     }
 
